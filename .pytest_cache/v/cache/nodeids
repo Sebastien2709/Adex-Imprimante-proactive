@@ -1,0 +1,8 @@
+[
+  "tests/test_cleaning.py::test_all_zero_flag",
+  "tests/test_cleaning.py::test_item_ledger_date_parse",
+  "tests/test_cleaning.py::test_meters_deltas_non_negative",
+  "tests/test_cleaning.py::test_pct_bounds",
+  "tests/test_validation.py::test_check_non_negative",
+  "tests/test_validation.py::test_check_pct_bounds"
+]

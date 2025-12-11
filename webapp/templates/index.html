@@ -1,0 +1,390 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8">
+    <title>Recommandations de toners (IA Adexgroup)</title>
+    <link
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      rel="stylesheet"
+    >
+    <style>
+      body {
+        background-color: #f5f5f7;
+      }
+      .app-header {
+        background: linear-gradient(135deg, #0d6efd, #6610f2);
+        color: white;
+        border-radius: 1rem;
+      }
+      .printer-card {
+        border-radius: 1rem;
+        border: 1px solid #e0e0e0;
+      }
+      .badge-prio-1 {
+        background-color: #dc3545;
+      }
+      .badge-prio-2 {
+        background-color: #fd7e14;
+      }
+      .badge-prio-3 {
+        background-color: #ffc107;
+        color: #212529;
+      }
+      .badge-prio-4 {
+        background-color: #198754;
+      }
+      .chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.25rem 0.65rem;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        background-color: rgba(255, 255, 255, 0.15);
+        color: #f8f9fa;
+        margin-right: 0.5rem;
+      }
+      .chip span {
+        font-weight: 600;
+        margin-right: 0.25rem;
+      }
+      .badge-type {
+        font-size: 0.75rem;
+      }
+      .badge-type-contrat {
+        background-color: #0d6efd;
+      }
+      .badge-type-commande {
+        background-color: #6c757d;
+      }
+      .badge-type-stock {
+        background-color: #0dcaf0;
+        color: #212529;
+      }
+      .badge-type-inconnu {
+        background-color: #adb5bd;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container py-4">
+
+      <!-- Bandeau haut -->
+      <div class="app-header p-4 mb-4 shadow-sm">
+        <div class="d-flex justify-content-between align-items-center flex-wrap">
+          <div class="mb-2">
+            <h1 class="h3 mb-1">Recommandations de toners (IA Adexgroup)</h1>
+            <p class="mb-0 opacity-75">
+              Liste des toners à envoyer, calculée automatiquement à partir des données KPAX + contrats (modèle V2.1).
+            </p>
+          </div>
+          <div class="text-end">
+            <div class="chip">
+              <span>Total</span> {{ total_rows }}
+            </div>
+            <div class="chip">
+              <span>À traiter</span> {{ pending_rows }}
+            </div>
+            <div class="chip">
+              <span>Envoyés</span> {{ sent_rows }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Zone filtres -->
+      <form class="row g-3 mb-4" method="get" action="/">
+        <div class="col-md-4">
+          <label class="form-label">Recherche n° de série</label>
+          <input
+            type="text"
+            class="form-control"
+            name="serial_query"
+            placeholder="Ex : XAUV, NV0L..."
+            value="{{ serial_query }}"
+          >
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Priorité</label>
+          <select class="form-select" name="priority">
+            <option value="">Toutes</option>
+            {% for p in priorities %}
+              <option value="{{ p }}" {% if p|string == selected_priority %}selected{% endif %}>
+                {{ p }}
+              </option>
+            {% endfor %}
+          </select>
+          <small class="text-muted">1 = critique, 4 = faible</small>
+        </div>
+
+        <div class="col-md-3">
+          <label class="form-label">Type de livraison</label>
+          <select class="form-select" name="type_livraison">
+            <option value="">Tous les types</option>
+            {% for tl in type_liv_options %}
+              <option value="{{ tl }}" {% if tl == selected_type_liv %}selected{% endif %}>
+                {% if tl == "contrat_maintenance" %}Contrat de maintenance
+                {% elif tl == "commande_simple" %}Commande simple
+                {% elif tl == "stock_seulement" %}Stock seulement
+                {% else %}{{ tl }}{% endif %}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="col-md-2 d-flex align-items-end">
+          <div class="form-check me-3">
+            <input class="form-check-input" type="checkbox" name="pending" value="1" id="pendingCheck"
+                {% if show_only_pending %}checked{% endif %}>
+            <label class="form-check-label" for="pendingCheck">
+                Uniquement à envoyer
+            </label>
+          </div>
+        </div>
+
+        <div class="col-12 d-flex justify-content-end">
+          <button type="submit" class="btn btn-primary me-2">Filtrer</button>
+          <a href="/" class="btn btn-outline-light border">Réinitialiser</a>
+        </div>
+      </form>
+
+      <!-- Graphiques de synthèse -->
+      <div class="row mb-4">
+        <div class="col-md-6 mb-3">
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <h5 class="card-title mb-3">Répartition par priorité</h5>
+              <canvas id="priorityChart" height="180"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-6 mb-3">
+          <div class="card shadow-sm">
+            <div class="card-body">
+              <h5 class="card-title mb-3">Répartition par couleur de toner</h5>
+              <canvas id="colorChart" height="180"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Liste des imprimantes regroupées -->
+      {% if grouped_printers %}
+        {% for printer in grouped_printers %}
+          <div class="card printer-card shadow-sm mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap">
+              <div class="mb-2">
+                <strong>Imprimante :</strong> {{ printer.serial_display }}
+                {% if printer.client %}
+                  <span class="ms-3">
+                    <strong>Client :</strong> {{ printer.client }}
+                  </span>
+                {% endif %}
+                {% if printer.contract %}
+                  <span class="ms-3 text-muted">
+                    Contrat : {{ printer.contract }}
+                  </span>
+                {% endif %}
+                {% if printer.city %}
+                  <span class="ms-3 text-muted">
+                    Ville : {{ printer.city }}
+                  </span>
+                {% endif %}
+                {% if printer.min_stockout_date %}
+                  <span class="ms-3 text-muted">
+                    Prochaine rupture estimée : <strong>{{ printer.min_stockout_date }}</strong>
+                  </span>
+                {% endif %}
+                {% if printer.min_days_left is not none %}
+                  <span class="ms-3 text-muted">
+                    Jours restants min : <strong>{{ printer.min_days_left|round(0) }}</strong>
+                  </span>
+                {% endif %}
+              </div>
+              <div class="mb-2">
+                {% if printer.min_priority %}
+                  {% set p = printer.min_priority %}
+                  <span class="badge
+                    {% if p == 1 %}badge-prio-1
+                    {% elif p == 2 %}badge-prio-2
+                    {% elif p == 3 %}badge-prio-3
+                    {% else %}badge-prio-4{% endif %}">
+                    Priorité min : {{ printer.min_priority }}
+                  </span>
+                {% endif %}
+              </div>
+            </div>
+            <div class="card-body p-0">
+              <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                  <thead class="table-light">
+                    <tr>
+                      <th style="width: 4%">ID</th>
+                      <th style="width: 10%">Toner</th>
+                      <th style="width: 9%">Jours restants</th>
+                      <th style="width: 13%">Date rupture estimée</th>
+                      <th style="width: 8%">Priorité</th>
+                      <th style="width: 10%">Dernière remontée</th>
+                      <th style="width: 6%">% actuel</th>
+                      <th style="width: 13%">Client</th>
+                      <th style="width: 8%">Ville</th>
+                      <th style="width: 12%">Type livraison</th>
+                      <th style="width: 15%">Commentaire</th>
+                      <th style="width: 7%">Statut</th>
+                      <th style="width: 12%">Action</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {% for r in printer.rows %}
+                      {% set rid = r[col_id] %}
+                      {% set prio = r.get(col_priority) %}
+                      <tr class="{% if rid in processed_ids %}table-success{% endif %}">
+                        <td>{{ rid }}</td>
+                        <td>{{ r.get(col_toner, '') }}</td>
+                        <td>{{ r.get(col_days, '') }}</td>
+                        <td>{{ r.get(col_stockout, '') }}</td>
+                        <td>
+                          {% if prio %}
+                            <span class="badge
+                              {% if prio == 1 %}badge-prio-1
+                              {% elif prio == 2 %}badge-prio-2
+                              {% elif prio == 3 %}badge-prio-3
+                              {% else %}badge-prio-4{% endif %}">
+                              P{{ prio }}
+                            </span>
+                          {% endif %}
+                        </td>
+                        <td>{{ r.get(col_last_update, '') }}</td>
+                        <td>
+                          {% if r.get(col_last_pct) is not none %}
+                            {{ r.get(col_last_pct) | round(0) }}%
+                          {% endif %}
+                        </td>
+                        <td>{{ r.get(col_client, '') }}</td>
+                        <td>{{ r.get(col_city, '') }}</td>
+                        <td>
+                          {% set tl = r.get(col_type_liv, '') %}
+                          {% if tl == "contrat_maintenance" %}
+                            <span class="badge badge-type badge-type-contrat">Contrat maintenance</span>
+                          {% elif tl == "commande_simple" %}
+                            <span class="badge badge-type badge-type-commande">Commande simple</span>
+                          {% elif tl == "stock_seulement" %}
+                            <span class="badge badge-type badge-type-stock">Stock seulement</span>
+                          {% elif tl %}
+                            <span class="badge badge-type badge-type-inconnu">{{ tl }}</span>
+                          {% endif %}
+                        </td>
+                        <td>{{ r.get(col_comment, '') }}</td>
+                        <td>
+                          {% if rid in processed_ids %}
+                            ✅ Envoyé
+                          {% else %}
+                            ⏳ À traiter
+                          {% endif %}
+                        </td>
+                        <td>
+                          {% if rid not in processed_ids %}
+                            <form method="post" action="{{ url_for('mark_processed', row_id=rid) }}">
+                              <button type="submit" class="btn btn-sm btn-outline-success">
+                                Marquer comme envoyé
+                              </button>
+                            </form>
+                          {% else %}
+                            <form method="post" action="{{ url_for('mark_unprocessed', row_id=rid) }}">
+                              <button type="submit" class="btn btn-sm btn-outline-warning">
+                                Annuler
+                              </button>
+                            </form>
+                          {% endif %}
+                        </td>
+                      </tr>
+                    {% endfor %}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      {% else %}
+        <div class="alert alert-info">
+          Aucune recommandation trouvée avec ces filtres.
+        </div>
+      {% endif %}
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <script id="priority-data" type="application/json">
+      {{ priority_counts | tojson }}
+    </script>
+
+    <script id="color-data" type="application/json">
+      {{ color_counts | tojson }}
+    </script>
+
+    <script>
+      const priorityCounts = JSON.parse(
+        document.getElementById("priority-data").textContent
+      );
+
+      const colorCounts = JSON.parse(
+        document.getElementById("color-data").textContent
+      );
+
+      // Graphique par priorité
+      const prCtx = document.getElementById('priorityChart');
+      if (prCtx && Object.keys(priorityCounts).length > 0) {
+        new Chart(prCtx, {
+          type: 'bar',
+          data: {
+            labels: Object.keys(priorityCounts),
+            datasets: [{
+              label: 'Nb de toners',
+              data: Object.values(priorityCounts)
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: { precision: 0 }
+              }
+            }
+          }
+        });
+      }
+
+      // Graphique par couleur
+      const colCtx = document.getElementById('colorChart');
+      if (colCtx && Object.keys(colorCounts).length > 0) {
+        new Chart(colCtx, {
+          type: 'bar',
+          data: {
+            labels: Object.keys(colorCounts),
+            datasets: [{
+              label: 'Nb de toners',
+              data: Object.values(colorCounts)
+            }]
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { display: false }
+            },
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: { precision: 0 }
+              }
+            }
+          }
+        });
+      }
+    </script>
+  </body>
+</html>

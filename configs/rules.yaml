@@ -1,0 +1,39 @@
+dates:
+  allow_future: false
+  timezone: "Europe/Paris"
+
+# Qualité / nettoyages généraux
+quality_thresholds:
+  max_all_zero_ratio: 0.20   # ex: % de séries avec 0% partout avant alerte
+
+joins:
+  keys: ["serial", "company"]
+
+meters:
+  allow_negative_deltas: false
+
+# Paramètres "features" consommables
+consumables:
+  pct_min: 0
+  pct_max: 100
+
+  # Détection de reset (dans detect_resets.py)
+  reset_jump_threshold: 30   # +30 pts = reset (changement cartouche)
+
+  # Régression de pente (compute_slopes.py)
+  lookback_days: 30
+  alt_lookback_days: 45      # élargit la fenêtre si peu de points
+  min_points_for_slope: 8
+  low_threshold_pct: 10      # on vise 10% (pas 0) pour la date de "stockout"
+  min_abs_slope_pct_per_day: 0.10  # ignorer les pentes trop faibles (bruit capteur)
+
+# Décision métier & horizons
+lead_time_days: 5
+buffer_days: 3
+horizon_cap_days: 300        # on évite des prévisions > 300 jours
+
+# Paramètres backtest (src/evaluation/backtest.py)
+backtest:
+  window_days: 365           # fenêtre autour de la date de référence pour chercher un envoi
+  max_match_days: 120        # distance max entre ref_date et l'envoi apparié (en jours)
+  jit_tol_days: 5            # "juste à temps" = |erreur| <= 5 jours

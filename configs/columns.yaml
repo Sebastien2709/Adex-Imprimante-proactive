@@ -1,0 +1,45 @@
+item_ledger:
+  "$No article$": article_no
+  "$Date compta$": doc_date
+  "$No document$": doc_no
+  "$Quantite$": qty
+  "$No contrat$": contract_no
+  "$No. serie$": serial
+  "$Designation$": designation
+  "$Fabricant$": manufacturer
+  "$Type conso$": consumable_type
+  "$Type conso general$": consumable_type_general
+  "$Capacite$": capacity_pages
+  "$Source conso$": source
+  "$Societe$": company
+
+kpax_consumables:
+  "$No serie$": serial
+  "$Date import$": date_import
+  "$Date update$": date_update
+  "$Adresse IP$": ip
+  "$Mac adresse$": mac
+  "$% noir$": black_pct
+  "$% cyan$": cyan_pct
+  "$% magenta$": magenta_pct
+  "$% jaune$": yellow_pct
+  "$Societe$": company
+
+meters:
+  "$No serie$": serial
+  "$No contrat$": contract_no
+  "$Date debut$": start_date
+  "$Date fin$": end_date
+  "$Source$": source
+  "$Debut A4 NB$": start_a4_bw
+  "$Fin A4 NB$": end_a4_bw
+  "$Debut A4 CO$": start_a4_color
+  "$Fin A4 CO$": end_a4_color
+  "$Debut SC$": start_scan
+  "$Fin SC$": end_scan
+  "$Debut A3 NB$": start_a3_bw
+  "$Fin A3 NB$": end_a3_bw
+  "$Debut A3 CO$": start_a3_color
+  "$Fin A3 CO$": end_a3_color
+  "$Date releve$": read_date
+  "$Societe$": company
