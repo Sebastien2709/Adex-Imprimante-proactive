@@ -1,1 +1,3 @@
-.venv/
+﻿.venv/
+data/raw/
+data/interim/
