@@ -1,48 +1,89 @@
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, abort
 
-
 app = Flask(__name__)
 
-# -------------------------------------------------------------------
+# ============================================================
 # CONFIG FICHIERS
-# -------------------------------------------------------------------
+# ============================================================
 
-DATA_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "outputs"
-    / "recommandations_toners_latest.csv"
-)
+BASE_DIR = Path(__file__).resolve().parents[1]
 
-PROCESSED_JSON = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "processed"
-    / "processed_recommendations_ui.json"
-)
+DATA_PATH = BASE_DIR / "data" / "outputs" / "recommandations_toners_latest.csv"
 
-KPAX_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "processed"
-    / "kpax_consumables.parquet"
-)
+PROCESSED_JSON = BASE_DIR / "data" / "processed" / "processed_recommendations_ui.json"
 
-FORECASTS_PATH = (
-    Path(__file__).resolve().parents[1]
-    / "data"
-    / "processed"
-    / "consumables_forecasts.parquet"
-)
+KPAX_PATH = BASE_DIR / "data" / "processed" / "kpax_consumables.parquet"
 
-# -------------------------------------------------------------------
-# SLOPES MAP (fallback)
-# -------------------------------------------------------------------
+FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
+
+# ============================================================
+# COLONNES
+# ============================================================
+
+COLUMN_SERIAL = "serial"
+COLUMN_SERIAL_DISPLAY = "serial_display"
+COLUMN_TONER = "toner"
+COLUMN_DAYS = "jours_avant_rupture"
+COLUMN_PRIORITY = "priorite"
+COLUMN_CLIENT = "client"
+COLUMN_CONTRACT = "contrat"
+COLUMN_CITY = "ville"
+COLUMN_COMMENT = "commentaire"
+COLUMN_STOCKOUT = "date_rupture_estimee"
+COLUMN_ID = "row_id"
+COLUMN_TYPE_LIV = "type_livraison"
+
+# KPAX dernières infos
+COLUMN_LAST_UPDATE = "last_update"
+COLUMN_LAST_PCT = "last_pct"
+
+KPAX_STALE_DAYS = 20
+
+# ============================================================
+# CACHES (IMPORTANT POUR RENDER)
+# - On ne charge RIEN de lourd au moment de l'import du module
+# ============================================================
+
+_SLOPES_MAP = None
+_KPAX_LAST_STATES = None
+_KPAX_HISTORY_LONG = None
+
+
+# ============================================================
+# UTILITAIRES JSON (processed)
+# ============================================================
+
+def load_processed_ids():
+    if PROCESSED_JSON.exists():
+        try:
+            with open(PROCESSED_JSON, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return set(data.get("processed_ids", []))
+        except Exception:
+            return set()
+    return set()
+
+
+def save_processed_ids(processed_ids):
+    PROCESSED_JSON.parent.mkdir(parents=True, exist_ok=True)
+    with open(PROCESSED_JSON, "w", encoding="utf-8") as f:
+        json.dump(
+            {"processed_ids": sorted(list(processed_ids))},
+            f,
+            ensure_ascii=False,
+            indent=2,
+        )
+
+
+# ============================================================
+# SLOPES MAP (lazy-load)
+# ============================================================
 
 def load_slopes_map():
     """
@@ -53,6 +94,7 @@ def load_slopes_map():
         print("[SLOPES] Fichier introuvable:", FORECASTS_PATH)
         return {}
 
+    # Pour limiter la RAM, on lit seulement les colonnes utiles (si elles existent)
     df = pd.read_parquet(FORECASTS_PATH)
     cols = list(df.columns)
 
@@ -115,58 +157,17 @@ def load_slopes_map():
     print(f"[SLOPES] slopes chargées: {len(slopes_map)}")
     return slopes_map
 
-SLOPES_MAP = load_slopes_map()
 
-# -------------------------------------------------------------------
-# COLONNES
-# -------------------------------------------------------------------
+def get_slopes_map():
+    global _SLOPES_MAP
+    if _SLOPES_MAP is None:
+        _SLOPES_MAP = load_slopes_map()
+    return _SLOPES_MAP
 
-COLUMN_SERIAL = "serial"
-COLUMN_SERIAL_DISPLAY = "serial_display"
-COLUMN_TONER = "toner"
-COLUMN_DAYS = "jours_avant_rupture"
-COLUMN_PRIORITY = "priorite"
-COLUMN_CLIENT = "client"
-COLUMN_CONTRACT = "contrat"
-COLUMN_CITY = "ville"
-COLUMN_COMMENT = "commentaire"
-COLUMN_STOCKOUT = "date_rupture_estimee"
-COLUMN_ID = "row_id"
-COLUMN_TYPE_LIV = "type_livraison"
 
-# KPAX dernières infos
-COLUMN_LAST_UPDATE = "last_update"
-COLUMN_LAST_PCT = "last_pct"
-
-KPAX_STALE_DAYS = 20
-
-# -------------------------------------------------------------------
-# UTILITAIRES
-# -------------------------------------------------------------------
-
-def load_processed_ids():
-    if PROCESSED_JSON.exists():
-        try:
-            with open(PROCESSED_JSON, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return set(data.get("processed_ids", []))
-        except Exception:
-            return set()
-    return set()
-
-def save_processed_ids(processed_ids):
-    PROCESSED_JSON.parent.mkdir(parents=True, exist_ok=True)
-    with open(PROCESSED_JSON, "w", encoding="utf-8") as f:
-        json.dump(
-            {"processed_ids": sorted(list(processed_ids))},
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-# -------------------------------------------------------------------
-# KPAX - LAST STATES (comme chez toi)
-# -------------------------------------------------------------------
+# ============================================================
+# KPAX - LAST STATES (lazy-load + columns= pour limiter RAM)
+# ============================================================
 
 def load_kpax_last_states():
     if not KPAX_PATH.exists():
@@ -175,13 +176,9 @@ def load_kpax_last_states():
             columns=[COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]
         )
 
-    df = pd.read_parquet(KPAX_PATH)
-    print("[KPAX] Colonnes trouvées :", list(df.columns))
-
     serial_col = "$No serie$"
     date_update_col = "$Date update$"
     date_import_col = "$Date import$"
-
     color_cols = {
         "black": "$% noir$",
         "cyan": "$% cyan$",
@@ -189,43 +186,36 @@ def load_kpax_last_states():
         "yellow": "$% jaune$",
     }
 
-    def parse_date(col_name):
-        raw = df[col_name].astype(str).str.strip().str.strip("$")
+    # Lire uniquement ces colonnes (énorme gain mémoire)
+    cols_to_read = [serial_col, date_update_col, date_import_col] + list(color_cols.values())
+    df = pd.read_parquet(KPAX_PATH, columns=cols_to_read)
+
+    def parse_date(series: pd.Series):
+        raw = series.astype(str).str.strip().str.strip("$")
         return pd.to_datetime(raw, errors="coerce", dayfirst=True)
 
-    df["__date_update"] = parse_date(date_update_col)
-    nb_valid_update = df["__date_update"].notna().sum()
-    print(f"[KPAX] nb dates valides sur $Date update$ : {nb_valid_update}")
+    d_up = parse_date(df[date_update_col]) if date_update_col in df.columns else pd.Series([pd.NaT] * len(df))
+    d_im = parse_date(df[date_import_col]) if date_import_col in df.columns else pd.Series([pd.NaT] * len(df))
+    date_chosen = d_up.where(d_up.notna(), d_im)
 
-    if nb_valid_update > 0:
-        df["__date_chosen"] = df["__date_update"]
-    else:
-        print("[KPAX] Fallback sur $Date import$")
-        df["__date_import"] = parse_date(date_import_col)
-        df["__date_chosen"] = df["__date_import"]
+    serial_display = df[serial_col].astype(str).str.replace("$", "", regex=False).str.strip()
 
     long_parts = []
     for color_name, col_name in color_cols.items():
         if col_name not in df.columns:
             continue
 
-        tmp = df[[serial_col, "__date_chosen", col_name]].copy()
-        tmp = tmp.rename(
-            columns={
-                serial_col: COLUMN_SERIAL,
-                "__date_chosen": COLUMN_LAST_UPDATE,
-                col_name: COLUMN_LAST_PCT,
-            }
-        )
+        pct_raw = df[col_name].astype(str).str.strip().str.strip("$")
+        pct = pd.to_numeric(pct_raw, errors="coerce")
 
-        tmp[COLUMN_SERIAL_DISPLAY] = (
-            tmp[COLUMN_SERIAL].astype(str).str.replace("$", "", regex=False).str.strip()
-        )
-        tmp["color"] = color_name
+        tmp = pd.DataFrame({
+            COLUMN_SERIAL_DISPLAY: serial_display,
+            "color": color_name,
+            COLUMN_LAST_UPDATE: date_chosen,
+            COLUMN_LAST_PCT: pct,
+        })
 
-        pct_raw = tmp[COLUMN_LAST_PCT].astype(str).str.strip().str.strip("$")
-        tmp[COLUMN_LAST_PCT] = pd.to_numeric(pct_raw, errors="coerce")
-
+        tmp = tmp.dropna(subset=[COLUMN_LAST_UPDATE])
         long_parts.append(tmp)
 
     if not long_parts:
@@ -235,8 +225,6 @@ def load_kpax_last_states():
         )
 
     long_df = pd.concat(long_parts, ignore_index=True)
-    long_df = long_df.dropna(subset=[COLUMN_LAST_UPDATE])
-
     if long_df.empty:
         return pd.DataFrame(
             columns=[COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]
@@ -246,19 +234,23 @@ def load_kpax_last_states():
     last_df = long_df.loc[idx, [COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]].copy()
     return last_df
 
-KPAX_LAST_STATES = load_kpax_last_states()
 
-# -------------------------------------------------------------------
-# KPAX - HISTORIQUE LONG (pour le graphe)
-# -------------------------------------------------------------------
+def get_kpax_last_states():
+    global _KPAX_LAST_STATES
+    if _KPAX_LAST_STATES is None:
+        _KPAX_LAST_STATES = load_kpax_last_states()
+    return _KPAX_LAST_STATES
 
-_KPAX_HISTORY_LONG = None
+
+# ============================================================
+# KPAX - HISTORIQUE LONG (pour graphe) lazy-load + columns=
+# ============================================================
 
 def load_kpax_history_long():
     """
     Retourne un DF long avec colonnes:
       serial_display, color, date, pct
-    Cache en mémoire pour éviter de relire le parquet à chaque click.
+    Cache en mémoire pour éviter de relire le parquet.
     """
     global _KPAX_HISTORY_LONG
 
@@ -269,12 +261,9 @@ def load_kpax_history_long():
         _KPAX_HISTORY_LONG = pd.DataFrame(columns=[COLUMN_SERIAL_DISPLAY, "color", "date", "pct"])
         return _KPAX_HISTORY_LONG
 
-    df = pd.read_parquet(KPAX_PATH)
-
     serial_col = "$No serie$"
     date_update_col = "$Date update$"
     date_import_col = "$Date import$"
-
     color_cols = {
         "black": "$% noir$",
         "cyan": "$% cyan$",
@@ -282,12 +271,15 @@ def load_kpax_history_long():
         "yellow": "$% jaune$",
     }
 
-    def parse_date_series(col_name):
-        raw = df[col_name].astype(str).str.strip().str.strip("$")
+    cols_to_read = [serial_col, date_update_col, date_import_col] + list(color_cols.values())
+    df = pd.read_parquet(KPAX_PATH, columns=cols_to_read)
+
+    def parse_date(series: pd.Series):
+        raw = series.astype(str).str.strip().str.strip("$")
         return pd.to_datetime(raw, errors="coerce", dayfirst=True)
 
-    d_up = parse_date_series(date_update_col) if date_update_col in df.columns else pd.Series([pd.NaT]*len(df))
-    d_im = parse_date_series(date_import_col) if date_import_col in df.columns else pd.Series([pd.NaT]*len(df))
+    d_up = parse_date(df[date_update_col]) if date_update_col in df.columns else pd.Series([pd.NaT] * len(df))
+    d_im = parse_date(df[date_import_col]) if date_import_col in df.columns else pd.Series([pd.NaT] * len(df))
     date_chosen = d_up.where(d_up.notna(), d_im)
 
     serial_display = df[serial_col].astype(str).str.replace("$", "", regex=False).str.strip()
@@ -296,6 +288,7 @@ def load_kpax_history_long():
     for color, col in color_cols.items():
         if col not in df.columns:
             continue
+
         pct_raw = df[col].astype(str).str.strip().str.strip("$")
         pct = pd.to_numeric(pct_raw, errors="coerce")
 
@@ -304,13 +297,13 @@ def load_kpax_history_long():
             "color": color,
             "date": date_chosen,
             "pct": pct
-        })
-        tmp = tmp.dropna(subset=["date", "pct"])
+        }).dropna(subset=["date", "pct"])
+
         parts.append(tmp)
 
     if parts:
         long_df = pd.concat(parts, ignore_index=True)
-        long_df = long_df.sort_values(["serial_display", "color", "date"])
+        long_df = long_df.sort_values([COLUMN_SERIAL_DISPLAY, "color", "date"])
         _KPAX_HISTORY_LONG = long_df
     else:
         _KPAX_HISTORY_LONG = pd.DataFrame(columns=[COLUMN_SERIAL_DISPLAY, "color", "date", "pct"])
@@ -318,9 +311,10 @@ def load_kpax_history_long():
     print("[KPAX] Historique long chargé:", len(_KPAX_HISTORY_LONG))
     return _KPAX_HISTORY_LONG
 
+
 def compute_slope_pct_per_day(dates: pd.Series, pcts: pd.Series):
     """
-    Slope via régression linéaire pct ~ jours (float) ; renvoie slope (%/jour)
+    Slope via régression linéaire pct ~ jours ; renvoie slope (%/jour)
     """
     if len(dates) < 2:
         return None
@@ -336,13 +330,13 @@ def compute_slope_pct_per_day(dates: pd.Series, pcts: pd.Series):
     if x.size < 2:
         return None
 
-    # y = a*x + b
-    a, b = np.polyfit(x, y, 1)
+    a, _b = np.polyfit(x, y, 1)
     return float(a)
 
-# -------------------------------------------------------------------
-# CHARGEMENT CSV BUSINESS + MERGE KPAX (comme chez toi)
-# -------------------------------------------------------------------
+
+# ============================================================
+# CHARGEMENT CSV BUSINESS + MERGE KPAX
+# ============================================================
 
 def load_data():
     print("[DATA] Lecture :", DATA_PATH)
@@ -361,13 +355,15 @@ def load_data():
     if COLUMN_PRIORITY in df.columns:
         df[COLUMN_PRIORITY] = pd.to_numeric(df[COLUMN_PRIORITY], errors="coerce").astype("Int64")
 
-    # Merge KPAX last states
-    if "couleur" in df.columns and not KPAX_LAST_STATES.empty:
+    # Merge KPAX last states (lazy)
+    kpax_last = get_kpax_last_states()
+
+    if "couleur" in df.columns and not kpax_last.empty:
         df["couleur_code"] = df["couleur"].astype(str).str.lower().str.strip()
 
         before = len(df)
         df = df.merge(
-            KPAX_LAST_STATES,
+            kpax_last,
             left_on=[COLUMN_SERIAL_DISPLAY, "couleur_code"],
             right_on=[COLUMN_SERIAL_DISPLAY, "color"],
             how="left",
@@ -375,32 +371,26 @@ def load_data():
         after = len(df)
         print(f"[MERGE] avant={before} après={after}")
 
-        today = pd.Timestamp.today().normalize()
-        df[COLUMN_LAST_UPDATE] = pd.to_datetime(df[COLUMN_LAST_UPDATE], errors="coerce")
-        df["days_since_last"] = (today - df[COLUMN_LAST_UPDATE]).dt.days
-
-        df["rupture_kpax"] = df["days_since_last"].isna() | (df["days_since_last"] > KPAX_STALE_DAYS)
         df = df.drop(columns=["couleur_code", "color"], errors="ignore")
     else:
         print("[MERGE] Pas de couleur ou pas de KPAX_LAST_STATES → colonnes vides.")
         df[COLUMN_LAST_UPDATE] = pd.NaT
         df[COLUMN_LAST_PCT] = pd.NA
 
-    # rupture flag (sécurité)
+    # rupture flag + incohérence
     today = pd.Timestamp.today().normalize()
-    df[COLUMN_LAST_UPDATE] = pd.to_datetime(df[COLUMN_LAST_UPDATE], errors="coerce")
+    df[COLUMN_LAST_UPDATE] = pd.to_datetime(df.get(COLUMN_LAST_UPDATE), errors="coerce")
     df["days_since_last"] = (today - df[COLUMN_LAST_UPDATE]).dt.days
     df["rupture_kpax"] = df["days_since_last"].isna() | (df["days_since_last"] > KPAX_STALE_DAYS)
 
     df["warning_incoherence"] = (
         (~df["rupture_kpax"])
-        & df[COLUMN_LAST_PCT].notna()
-        & (df[COLUMN_LAST_PCT] >= 20)
-        & df[COLUMN_DAYS].notna()
-        & (df[COLUMN_DAYS] <= 3)
+        & df.get(COLUMN_LAST_PCT).notna()
+        & (df.get(COLUMN_LAST_PCT) >= 20)
+        & df.get(COLUMN_DAYS).notna()
+        & (df.get(COLUMN_DAYS) <= 3)
     )
 
-    # Normalisation couleur pour l’UI (utile pour les boutons)
     if "couleur" in df.columns:
         df["couleur_norm"] = df["couleur"].astype(str).str.lower().str.strip()
     else:
@@ -408,9 +398,10 @@ def load_data():
 
     return df
 
-# -------------------------------------------------------------------
-# API : historique + pente
-# -------------------------------------------------------------------
+
+# ============================================================
+# API
+# ============================================================
 
 @app.route("/api/consumption", methods=["GET"])
 def api_consumption():
@@ -418,8 +409,6 @@ def api_consumption():
     Params:
       serial=XXXX
       color=black|cyan|magenta|yellow
-    Renvoie:
-      { serial, color, points:[{date,pct}], slope_pct_per_day, slope_source }
     """
     serial = (request.args.get("serial") or "").strip()
     color = (request.args.get("color") or "").strip().lower()
@@ -433,9 +422,10 @@ def api_consumption():
         & (hist["color"].astype(str).str.lower() == color)
     ].copy()
 
+    slopes_map = get_slopes_map()
+
     if sub.empty:
-        # fallback slope map only
-        slope_fallback = SLOPES_MAP.get((serial, color))
+        slope_fallback = slopes_map.get((serial, color))
         return jsonify({
             "serial": serial,
             "color": color,
@@ -451,7 +441,7 @@ def api_consumption():
     slope_source = "kpax_regression"
 
     if slope is None:
-        slope = SLOPES_MAP.get((serial, color))
+        slope = slopes_map.get((serial, color))
         slope_source = "forecasts_fallback" if slope is not None else None
 
     return jsonify({
@@ -462,9 +452,48 @@ def api_consumption():
         "slope_source": slope_source
     })
 
-# -------------------------------------------------------------------
-# ROUTES UI
-# -------------------------------------------------------------------
+
+@app.route("/api/slopes", methods=["GET"])
+def api_slopes():
+    serial = (request.args.get("serial") or "").strip()
+    if not serial:
+        return jsonify({"error": "missing serial"}), 400
+
+    slopes_map = get_slopes_map()
+    colors = ["black", "cyan", "magenta", "yellow"]
+    slopes = {c: slopes_map.get((serial, c)) for c in colors}
+
+    return jsonify({"serial": serial, "slopes": slopes})
+
+
+@app.route("/api/printer_history", methods=["GET"])
+def api_printer_history():
+    serial = (request.args.get("serial") or "").strip()
+    if not serial:
+        return jsonify({"error": "missing serial"}), 400
+
+    hist = load_kpax_history_long()
+    sub = hist[hist[COLUMN_SERIAL_DISPLAY].astype(str) == serial].copy().sort_values("date")
+
+    series = {c: [] for c in ["black", "cyan", "magenta", "yellow"]}
+
+    if not sub.empty:
+        for color, g in sub.groupby("color"):
+            color = str(color).lower().strip()
+            if color not in series:
+                continue
+            series[color] = [
+                {"date": d.strftime("%Y-%m-%d"), "pct": float(p)}
+                for d, p in zip(g["date"], g["pct"])
+                if pd.notna(d) and pd.notna(p)
+            ]
+
+    return jsonify({"serial": serial, "series": series})
+
+
+# ============================================================
+# UI
+# ============================================================
 
 @app.route("/", methods=["GET"])
 def index():
@@ -475,9 +504,9 @@ def index():
     selected_priority = request.args.get("priority", "").strip()
     selected_type_liv = request.args.get("type_livraison", "").strip()
 
+    # (tu as dit avoir supprimé le checkbox pending → on ne force plus rien ici)
     pending_param = request.args.get("pending")
     show_only_pending = (pending_param == "1")
-
 
     priorities = sorted(df[COLUMN_PRIORITY].dropna().unique().tolist()) if COLUMN_PRIORITY in df.columns else []
 
@@ -492,9 +521,7 @@ def index():
     filtered = df.copy()
 
     if serial_query:
-        filtered = filtered[
-            filtered[COLUMN_SERIAL_DISPLAY].str.contains(serial_query, case=False, na=False)
-        ]
+        filtered = filtered[filtered[COLUMN_SERIAL_DISPLAY].str.contains(serial_query, case=False, na=False)]
 
     if selected_priority:
         try:
@@ -509,6 +536,14 @@ def index():
     if show_only_pending:
         filtered = filtered[~filtered[COLUMN_ID].isin(processed_ids)]
 
+    # Filtre serveur rupture (radio)
+    rupture_mode = request.args.get("rupture_mode", "all")
+    if rupture_mode == "rupture":
+        filtered = filtered[filtered["rupture_kpax"] == True]
+    elif rupture_mode == "ok":
+        filtered = filtered[filtered["rupture_kpax"] == False]
+
+    # Tri
     sort_cols = []
     if COLUMN_PRIORITY in filtered.columns:
         sort_cols.append(COLUMN_PRIORITY)
@@ -518,21 +553,11 @@ def index():
     sort_cols.append(COLUMN_SERIAL_DISPLAY)
 
     if "rupture_kpax" in filtered.columns:
-        filtered = filtered.sort_values(
-            by=["rupture_kpax"] + sort_cols,
-            ascending=[True] + [True] * len(sort_cols),
-        )
+        filtered = filtered.sort_values(by=["rupture_kpax"] + sort_cols, ascending=[True] + [True] * len(sort_cols))
     else:
         filtered = filtered.sort_values(sort_cols)
 
-    rupture_mode = request.args.get("rupture_mode", "all")
-    if rupture_mode == "rupture":
-        filtered = filtered[filtered["rupture_kpax"] == True]
-    elif rupture_mode == "ok":
-        filtered = filtered[filtered["rupture_kpax"] == False]
-
-
-    # --------- Regroupement par imprimante ----------
+    # Regroupement par imprimante
     grouped_printers = []
     if not filtered.empty:
         for serial_display, sub in filtered.groupby(COLUMN_SERIAL_DISPLAY):
@@ -540,7 +565,7 @@ def index():
 
             min_days_left = float(sub[COLUMN_DAYS].min()) if COLUMN_DAYS in sub.columns else None
             min_stockout_date = str(sub[COLUMN_STOCKOUT].min()) if COLUMN_STOCKOUT in sub.columns else None
-            min_priority = int(sub[COLUMN_PRIORITY].min()) if COLUMN_PRIORITY in sub.columns else None
+            min_priority = int(sub[COLUMN_PRIORITY].min()) if COLUMN_PRIORITY in sub.columns and sub[COLUMN_PRIORITY].notna().any() else None
 
             client_name = (
                 sub[COLUMN_CLIENT].dropna().astype(str).iloc[0]
@@ -558,7 +583,6 @@ def index():
                 else None
             )
 
-            # couleurs présentes pour cette imprimante (pour les boutons rapides / modal)
             colors_present = []
             if "couleur_norm" in sub.columns:
                 colors_present = (
@@ -574,21 +598,19 @@ def index():
                 )
                 colors_present = sorted(colors_present)
 
-            grouped_printers.append(
-                {
-                    "serial_display": serial_display,
-                    "client": client_name,
-                    "contract": contract_no,
-                    "city": city,
-                    "rows": rows,
-                    "min_days_left": min_days_left,
-                    "min_stockout_date": min_stockout_date,
-                    "min_priority": min_priority,
-                    "colors_present": colors_present,
-                }
-            )
+            grouped_printers.append({
+                "serial_display": serial_display,
+                "client": client_name,
+                "contract": contract_no,
+                "city": city,
+                "rows": rows,
+                "min_days_left": min_days_left,
+                "min_stockout_date": min_stockout_date,
+                "min_priority": min_priority,
+                "colors_present": colors_present,
+            })
 
-    # --------- Stats pour les graphiques ----------
+    # Stats
     priority_counts = {}
     color_counts = {}
 
@@ -600,7 +622,6 @@ def index():
         col_series = filtered["couleur"].value_counts()
         color_counts = {str(k): int(v) for k, v in col_series.items()}
 
-    # --------- Stats chips ----------
     total_rows = int(len(filtered))
     pending_mask = ~filtered[COLUMN_ID].isin(processed_ids)
     pending_rows = int(pending_mask.sum())
@@ -636,118 +657,29 @@ def index():
         sent_rows=sent_rows,
     )
 
-@app.route("/mark_processed/<int:row_id>", methods=["POST"])
-def mark_processed(row_id):
-    processed = load_processed_ids()
-    processed.add(row_id)
-    save_processed_ids(processed)
-    return redirect(url_for("index"))
-
-@app.route("/mark_unprocessed/<int:row_id>", methods=["POST"])
-def mark_unprocessed(row_id):
-    processed = load_processed_ids()
-    processed.discard(row_id)
-    save_processed_ids(processed)
-    return redirect(url_for("index"))
-@app.route("/api/slopes", methods=["GET"])
-def api_slopes():
-    """
-    Params:
-      serial=XXXX (serial_display)
-    Return:
-      { serial, slopes: {black: -x, cyan: -y, magenta: -z, yellow: -w} }
-    """
-    serial = (request.args.get("serial") or "").strip()
-    if not serial:
-        return jsonify({"error": "missing serial"}), 400
-
-    # Si on a déjà un SLOPES_MAP en mémoire (issu de consumables_forecasts.parquet)
-    # on peut l'exploiter directement.
-    colors = ["black", "cyan", "magenta", "yellow"]
-    slopes = {}
-
-    for c in colors:
-        val = SLOPES_MAP.get((serial, c))
-        slopes[c] = val  # peut être None
-
-    # Si toutes les valeurs sont None, renvoyer quand même la structure
-    return jsonify({
-        "serial": serial,
-        "slopes": slopes
-    })
-
-@app.route("/api/printer_history", methods=["GET"])
-def api_printer_history():
-    """
-    Params:
-      serial=XXXX (serial_display)
-    Return:
-      {
-        serial: "....",
-        series: {
-          black: [{date:"YYYY-MM-DD", pct: 45.0}, ...],
-          cyan: [...],
-          magenta: [...],
-          yellow: [...]
-        }
-      }
-    """
-    serial = (request.args.get("serial") or "").strip()
-    if not serial:
-        return jsonify({"error": "missing serial"}), 400
-
-    hist = load_kpax_history_long()
-
-    sub = hist[hist[COLUMN_SERIAL_DISPLAY].astype(str) == serial].copy()
-    sub = sub.sort_values("date")
-
-    series = {c: [] for c in ["black", "cyan", "magenta", "yellow"]}
-
-    if not sub.empty:
-        for color, g in sub.groupby("color"):
-            color = str(color).lower().strip()
-            if color not in series:
-                continue
-            series[color] = [
-                {"date": d.strftime("%Y-%m-%d"), "pct": float(p)}
-                for d, p in zip(g["date"], g["pct"])
-                if pd.notna(d) and pd.notna(p)
-            ]
-
-    return jsonify({"serial": serial, "series": series})
-
 
 @app.route("/printer/<serial_display>", methods=["GET"])
-
 def printer_detail(serial_display):
-    """
-    Page détail imprimante: infos + tableau toners + graphe 4 couleurs
-    """
     serial_display = (serial_display or "").strip()
 
     df = load_data()
     sub = df[df[COLUMN_SERIAL_DISPLAY].astype(str) == serial_display].copy()
-
     if sub.empty:
         abort(404)
 
-    # Infos "header"
     client_name = sub[COLUMN_CLIENT].dropna().astype(str).iloc[0] if COLUMN_CLIENT in sub.columns and not sub[COLUMN_CLIENT].isna().all() else ""
     contract_no = sub[COLUMN_CONTRACT].dropna().astype(str).iloc[0] if COLUMN_CONTRACT in sub.columns and not sub[COLUMN_CONTRACT].isna().all() else ""
     city = sub[COLUMN_CITY].dropna().astype(str).iloc[0] if COLUMN_CITY in sub.columns and not sub[COLUMN_CITY].isna().all() else ""
 
-    # Quelques agrégats utiles
     min_days_left = sub[COLUMN_DAYS].min() if COLUMN_DAYS in sub.columns else None
     min_stockout_date = sub[COLUMN_STOCKOUT].min() if COLUMN_STOCKOUT in sub.columns else None
     min_priority = sub[COLUMN_PRIORITY].min() if COLUMN_PRIORITY in sub.columns else None
 
-    # Toners / lignes
     rows = sub.to_dict(orient="records")
 
-    # Pentes (si tu veux aussi les afficher sur la page détail)
-    slopes = {c: SLOPES_MAP.get((serial_display, c)) for c in ["black", "cyan", "magenta", "yellow"]}
+    slopes_map = get_slopes_map()
+    slopes = {c: slopes_map.get((serial_display, c)) for c in ["black", "cyan", "magenta", "yellow"]}
 
-    # --- KPAX status (4 couleurs) depuis l'historique (robuste) ---
     hist = load_kpax_history_long()
     hsub = hist[hist[COLUMN_SERIAL_DISPLAY].astype(str) == serial_display].copy()
     hsub = hsub.dropna(subset=["date", "pct"]).sort_values("date")
@@ -764,7 +696,6 @@ def printer_detail(serial_display):
                 "last_update": last["date"].strftime("%Y-%m-%d"),
                 "last_pct": float(last["pct"]),
             })
-
 
     return render_template(
         "printer_detail.html",
@@ -789,5 +720,24 @@ def printer_detail(serial_display):
         col_last_pct=COLUMN_LAST_PCT,
     )
 
+
+@app.route("/mark_processed/<int:row_id>", methods=["POST"])
+def mark_processed(row_id):
+    processed = load_processed_ids()
+    processed.add(row_id)
+    save_processed_ids(processed)
+    return redirect(url_for("index"))
+
+
+@app.route("/mark_unprocessed/<int:row_id>", methods=["POST"])
+def mark_unprocessed(row_id):
+    processed = load_processed_ids()
+    processed.discard(row_id)
+    save_processed_ids(processed)
+    return redirect(url_for("index"))
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    # utile en local; sur Render tu démarres via gunicorn + $PORT
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host="0.0.0.0", port=port, debug=False)
