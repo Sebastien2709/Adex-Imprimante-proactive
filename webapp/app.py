@@ -8,6 +8,7 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, a
 
 app = Flask(__name__)
 
+
 @app.route("/health")
 def health():
     return "ok", 200
@@ -20,11 +21,16 @@ def health():
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 DATA_PATH = BASE_DIR / "data" / "outputs" / "recommandations_toners_latest.csv"
-
 PROCESSED_JSON = BASE_DIR / "data" / "processed" / "processed_recommendations_ui.json"
 
+# CSV léger (commité) : dernier état KPAX par (imprimante, couleur)
 KPAX_LAST_CSV = BASE_DIR / "data" / "processed" / "kpax_last_states.csv"
 
+# Parquet lourd (LOCAL seulement si tu l’as). Sur Render, ne pas le commit.
+KPAX_PATH = BASE_DIR / "data" / "processed" / "kpax_consumables.parquet"
+
+# Active/désactive l'historique (parquet KPAX) pour les graphes
+KPAX_HISTORY_ENABLED = os.getenv("KPAX_HISTORY_ENABLED", "0") == "1"
 
 FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
 
@@ -100,7 +106,6 @@ def load_slopes_map():
         print("[SLOPES] Fichier introuvable:", FORECASTS_PATH)
         return {}
 
-    # Pour limiter la RAM, on lit seulement les colonnes utiles (si elles existent)
     df = pd.read_parquet(FORECASTS_PATH)
     cols = list(df.columns)
 
@@ -172,19 +177,19 @@ def get_slopes_map():
 
 
 # ============================================================
-# KPAX - LAST STATES (lazy-load + columns= pour limiter RAM)
+# KPAX - LAST STATES (CSV léger)
 # ============================================================
 
 def load_kpax_last_states():
     if not KPAX_LAST_CSV.exists():
-        return pd.DataFrame(columns=["serial_display","color","last_update","last_pct"])
+        return pd.DataFrame(columns=["serial_display", "color", "last_update", "last_pct"])
+
     df = pd.read_csv(KPAX_LAST_CSV)
     df["serial_display"] = df["serial_display"].astype(str).str.strip()
     df["color"] = df["color"].astype(str).str.lower().str.strip()
     df["last_update"] = pd.to_datetime(df["last_update"], errors="coerce")
     df["last_pct"] = pd.to_numeric(df["last_pct"], errors="coerce")
     return df
-
 
 
 def get_kpax_last_states():
@@ -195,16 +200,19 @@ def get_kpax_last_states():
 
 
 # ============================================================
-# KPAX - HISTORIQUE LONG (pour graphe) lazy-load + columns=
+# KPAX - HISTORIQUE LONG (parquet lourd) - OPTIONNEL
 # ============================================================
 
 def load_kpax_history_long():
     """
-    Retourne un DF long avec colonnes:
-      serial_display, color, date, pct
-    Cache en mémoire pour éviter de relire le parquet.
+    DF long: serial_display, color, date, pct
+    - Si KPAX_HISTORY_ENABLED=False => renvoie vide (pas de parquet)
+    - Sinon, lit KPAX_PATH (local) et met en cache
     """
     global _KPAX_HISTORY_LONG
+
+    if not KPAX_HISTORY_ENABLED:
+        return pd.DataFrame(columns=[COLUMN_SERIAL_DISPLAY, "color", "date", "pct"])
 
     if _KPAX_HISTORY_LONG is not None:
         return _KPAX_HISTORY_LONG
@@ -265,9 +273,7 @@ def load_kpax_history_long():
 
 
 def compute_slope_pct_per_day(dates: pd.Series, pcts: pd.Series):
-    """
-    Slope via régression linéaire pct ~ jours ; renvoie slope (%/jour)
-    """
+    """Slope via régression linéaire pct ~ jours ; renvoie slope (%/jour)"""
     if len(dates) < 2:
         return None
 
@@ -287,7 +293,7 @@ def compute_slope_pct_per_day(dates: pd.Series, pcts: pd.Series):
 
 
 # ============================================================
-# CHARGEMENT CSV BUSINESS + MERGE KPAX
+# CHARGEMENT CSV BUSINESS + MERGE KPAX (CSV léger)
 # ============================================================
 
 def load_data():
@@ -307,7 +313,6 @@ def load_data():
     if COLUMN_PRIORITY in df.columns:
         df[COLUMN_PRIORITY] = pd.to_numeric(df[COLUMN_PRIORITY], errors="coerce").astype("Int64")
 
-    # Merge KPAX last states (lazy)
     kpax_last = get_kpax_last_states()
 
     if "couleur" in df.columns and not kpax_last.empty:
@@ -325,7 +330,7 @@ def load_data():
 
         df = df.drop(columns=["couleur_code", "color"], errors="ignore")
     else:
-        print("[MERGE] Pas de couleur ou pas de KPAX_LAST_STATES → colonnes vides.")
+        print("[MERGE] Pas de couleur ou pas de KPAX_LAST_CSV → colonnes vides.")
         df[COLUMN_LAST_UPDATE] = pd.NaT
         df[COLUMN_LAST_PCT] = pd.NA
 
@@ -357,24 +362,30 @@ def load_data():
 
 @app.route("/api/consumption", methods=["GET"])
 def api_consumption():
-    """
-    Params:
-      serial=XXXX
-      color=black|cyan|magenta|yellow
-    """
     serial = (request.args.get("serial") or "").strip()
     color = (request.args.get("color") or "").strip().lower()
 
     if not serial or not color:
         return jsonify({"error": "missing serial or color"}), 400
 
+    slopes_map = get_slopes_map()
+
+    # historique désactivé => renvoie slope forecasts + pas de points
+    if not KPAX_HISTORY_ENABLED:
+        slope_fallback = slopes_map.get((serial, color))
+        return jsonify({
+            "serial": serial,
+            "color": color,
+            "points": [],
+            "slope_pct_per_day": slope_fallback,
+            "slope_source": "forecasts_fallback" if slope_fallback is not None else None
+        })
+
     hist = load_kpax_history_long()
     sub = hist[
         (hist[COLUMN_SERIAL_DISPLAY].astype(str) == serial)
         & (hist["color"].astype(str).str.lower() == color)
     ].copy()
-
-    slopes_map = get_slopes_map()
 
     if sub.empty:
         slope_fallback = slopes_map.get((serial, color))
@@ -424,6 +435,10 @@ def api_printer_history():
     if not serial:
         return jsonify({"error": "missing serial"}), 400
 
+    # historique désactivé => renvoie vide
+    if not KPAX_HISTORY_ENABLED:
+        return jsonify({"serial": serial, "series": {c: [] for c in ["black", "cyan", "magenta", "yellow"]}})
+
     hist = load_kpax_history_long()
     sub = hist[hist[COLUMN_SERIAL_DISPLAY].astype(str) == serial].copy().sort_values("date")
 
@@ -456,7 +471,6 @@ def index():
     selected_priority = request.args.get("priority", "").strip()
     selected_type_liv = request.args.get("type_livraison", "").strip()
 
-    # (tu as dit avoir supprimé le checkbox pending → on ne force plus rien ici)
     pending_param = request.args.get("pending")
     show_only_pending = (pending_param == "1")
 
@@ -488,14 +502,12 @@ def index():
     if show_only_pending:
         filtered = filtered[~filtered[COLUMN_ID].isin(processed_ids)]
 
-    # Filtre serveur rupture (radio)
     rupture_mode = request.args.get("rupture_mode", "all")
     if rupture_mode == "rupture":
         filtered = filtered[filtered["rupture_kpax"] == True]
     elif rupture_mode == "ok":
         filtered = filtered[filtered["rupture_kpax"] == False]
 
-    # Tri
     sort_cols = []
     if COLUMN_PRIORITY in filtered.columns:
         sort_cols.append(COLUMN_PRIORITY)
@@ -509,7 +521,6 @@ def index():
     else:
         filtered = filtered.sort_values(sort_cols)
 
-    # Regroupement par imprimante
     grouped_printers = []
     if not filtered.empty:
         for serial_display, sub in filtered.groupby(COLUMN_SERIAL_DISPLAY):
@@ -562,7 +573,6 @@ def index():
                 "colors_present": colors_present,
             })
 
-    # Stats
     priority_counts = {}
     color_counts = {}
 
@@ -632,21 +642,22 @@ def printer_detail(serial_display):
     slopes_map = get_slopes_map()
     slopes = {c: slopes_map.get((serial_display, c)) for c in ["black", "cyan", "magenta", "yellow"]}
 
-    hist = load_kpax_history_long()
-    hsub = hist[hist[COLUMN_SERIAL_DISPLAY].astype(str) == serial_display].copy()
-    hsub = hsub.dropna(subset=["date", "pct"]).sort_values("date")
+    # ---- KPAX STATUS (toujours depuis le CSV léger) ----
+    kpax_last = get_kpax_last_states()
+    ksub = kpax_last[kpax_last["serial_display"].astype(str) == serial_display].copy()
 
     kpax_status = []
     for c in ["black", "cyan", "magenta", "yellow"]:
-        g = hsub[hsub["color"].astype(str).str.lower() == c]
+        g = ksub[ksub["color"].astype(str).str.lower() == c]
         if g.empty:
             kpax_status.append({"color": c, "last_update": None, "last_pct": None})
         else:
-            last = g.iloc[-1]
+            last = g.iloc[0]
+            lu = last.get("last_update")
             kpax_status.append({
                 "color": c,
-                "last_update": last["date"].strftime("%Y-%m-%d"),
-                "last_pct": float(last["pct"]),
+                "last_update": lu.strftime("%Y-%m-%d") if pd.notna(lu) else None,
+                "last_pct": float(last.get("last_pct")) if pd.notna(last.get("last_pct")) else None,
             })
 
     return render_template(
@@ -670,6 +681,7 @@ def printer_detail(serial_display):
         col_type_liv=COLUMN_TYPE_LIV,
         col_last_update=COLUMN_LAST_UPDATE,
         col_last_pct=COLUMN_LAST_PCT,
+        kpax_history_enabled=KPAX_HISTORY_ENABLED,
     )
 
 
@@ -690,6 +702,5 @@ def mark_unprocessed(row_id):
 
 
 if __name__ == "__main__":
-    # utile en local; sur Render tu démarres via gunicorn + $PORT
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
