@@ -8,6 +8,11 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, a
 
 app = Flask(__name__)
 
+@app.route("/health")
+def health():
+    return "ok", 200
+
+
 # ============================================================
 # CONFIG FICHIERS
 # ============================================================
@@ -18,7 +23,8 @@ DATA_PATH = BASE_DIR / "data" / "outputs" / "recommandations_toners_latest.csv"
 
 PROCESSED_JSON = BASE_DIR / "data" / "processed" / "processed_recommendations_ui.json"
 
-KPAX_PATH = BASE_DIR / "data" / "processed" / "kpax_consumables.parquet"
+KPAX_LAST_CSV = BASE_DIR / "data" / "processed" / "kpax_last_states.csv"
+
 
 FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
 
@@ -170,69 +176,15 @@ def get_slopes_map():
 # ============================================================
 
 def load_kpax_last_states():
-    if not KPAX_PATH.exists():
-        print("[KPAX] Fichier introuvable :", KPAX_PATH)
-        return pd.DataFrame(
-            columns=[COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]
-        )
+    if not KPAX_LAST_CSV.exists():
+        return pd.DataFrame(columns=["serial_display","color","last_update","last_pct"])
+    df = pd.read_csv(KPAX_LAST_CSV)
+    df["serial_display"] = df["serial_display"].astype(str).str.strip()
+    df["color"] = df["color"].astype(str).str.lower().str.strip()
+    df["last_update"] = pd.to_datetime(df["last_update"], errors="coerce")
+    df["last_pct"] = pd.to_numeric(df["last_pct"], errors="coerce")
+    return df
 
-    serial_col = "$No serie$"
-    date_update_col = "$Date update$"
-    date_import_col = "$Date import$"
-    color_cols = {
-        "black": "$% noir$",
-        "cyan": "$% cyan$",
-        "magenta": "$% magenta$",
-        "yellow": "$% jaune$",
-    }
-
-    # Lire uniquement ces colonnes (énorme gain mémoire)
-    cols_to_read = [serial_col, date_update_col, date_import_col] + list(color_cols.values())
-    df = pd.read_parquet(KPAX_PATH, columns=cols_to_read)
-
-    def parse_date(series: pd.Series):
-        raw = series.astype(str).str.strip().str.strip("$")
-        return pd.to_datetime(raw, errors="coerce", dayfirst=True)
-
-    d_up = parse_date(df[date_update_col]) if date_update_col in df.columns else pd.Series([pd.NaT] * len(df))
-    d_im = parse_date(df[date_import_col]) if date_import_col in df.columns else pd.Series([pd.NaT] * len(df))
-    date_chosen = d_up.where(d_up.notna(), d_im)
-
-    serial_display = df[serial_col].astype(str).str.replace("$", "", regex=False).str.strip()
-
-    long_parts = []
-    for color_name, col_name in color_cols.items():
-        if col_name not in df.columns:
-            continue
-
-        pct_raw = df[col_name].astype(str).str.strip().str.strip("$")
-        pct = pd.to_numeric(pct_raw, errors="coerce")
-
-        tmp = pd.DataFrame({
-            COLUMN_SERIAL_DISPLAY: serial_display,
-            "color": color_name,
-            COLUMN_LAST_UPDATE: date_chosen,
-            COLUMN_LAST_PCT: pct,
-        })
-
-        tmp = tmp.dropna(subset=[COLUMN_LAST_UPDATE])
-        long_parts.append(tmp)
-
-    if not long_parts:
-        print("[KPAX] Aucune colonne couleur trouvée.")
-        return pd.DataFrame(
-            columns=[COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]
-        )
-
-    long_df = pd.concat(long_parts, ignore_index=True)
-    if long_df.empty:
-        return pd.DataFrame(
-            columns=[COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]
-        )
-
-    idx = long_df.groupby([COLUMN_SERIAL_DISPLAY, "color"])[COLUMN_LAST_UPDATE].idxmax()
-    last_df = long_df.loc[idx, [COLUMN_SERIAL_DISPLAY, "color", COLUMN_LAST_UPDATE, COLUMN_LAST_PCT]].copy()
-    return last_df
 
 
 def get_kpax_last_states():
