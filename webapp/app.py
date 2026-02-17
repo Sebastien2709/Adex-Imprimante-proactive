@@ -1,6 +1,8 @@
 import json
 import os
 from pathlib import Path
+import io
+import time
 
 import numpy as np
 import pandas as pd
@@ -128,6 +130,101 @@ KPAX_PATH = BASE_DIR / "data" / "processed" / "kpax_consumables.parquet"
 KPAX_HISTORY_ENABLED = os.getenv("KPAX_HISTORY_ENABLED", "0") == "1"
 
 FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
+
+# ============================================================
+# SUPABASE — téléchargement des données au démarrage
+# ============================================================
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+SUPABASE_BUCKET = "toner-data"
+
+# Fichiers à télécharger depuis Supabase : (nom_bucket, chemin_local)
+SUPABASE_FILES = []  # rempli après BASE_DIR
+
+def _init_supabase_files():
+    global SUPABASE_FILES
+    SUPABASE_FILES = [
+        ("recommandations_toners_latest.csv", BASE_DIR / "data" / "outputs"   / "recommandations_toners_latest.csv"),
+        ("kpax_last_states.csv",              BASE_DIR / "data" / "processed" / "kpax_last_states.csv"),
+        ("kpax_history_light.csv",            BASE_DIR / "data" / "processed" / "kpax_history_light.csv"),
+        ("contract_status.parquet",           BASE_DIR / "data" / "processed" / "contract_status.parquet"),
+    ]
+
+def _download_chunked_csv(client, remote_name: str, local_path: Path) -> bool:
+    """Reconstitue un gros CSV découpé en chunks gzip."""
+    import gzip as gz_mod
+    try:
+        meta_raw = client.storage.from_(SUPABASE_BUCKET).download(f"{remote_name}.meta.json")
+        meta     = json.loads(meta_raw)
+        n_chunks = meta["chunks"]
+    except Exception:
+        return False  # pas de chunks → fichier normal
+
+    print(f"[SUPABASE] {remote_name} → {n_chunks} chunks à reconstituer...")
+    dfs = []
+    for i in range(n_chunks):
+        chunk_name = f"{remote_name}.chunk{i}.gz"
+        gz_data    = client.storage.from_(SUPABASE_BUCKET).download(chunk_name)
+        csv_bytes  = gz_mod.decompress(gz_data)
+        dfs.append(pd.read_csv(io.BytesIO(csv_bytes)))
+        print(f"[SUPABASE]   chunk {i+1}/{n_chunks} OK")
+
+    df = pd.concat(dfs, ignore_index=True)
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(local_path, index=False)
+    print(f"[SUPABASE] ✅ {remote_name} reconstitué ({len(df)} lignes)")
+    return True
+
+
+def download_from_supabase():
+    """
+    Télécharge les fichiers depuis Supabase Storage si :
+    - SUPABASE_URL est défini (on est sur Render)
+    - Le fichier local est absent ou vieux (> 6h)
+    Gère automatiquement les gros fichiers découpés en chunks.
+    """
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return  # local : on utilise les fichiers locaux
+
+    try:
+        from supabase import create_client
+    except ImportError:
+        print("[SUPABASE] supabase-py non installé — skip download")
+        return
+
+    _init_supabase_files()
+    client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    print(f"[SUPABASE] Connecté — téléchargement des données...")
+
+    for remote_name, local_path in SUPABASE_FILES:
+        # Skip si fichier récent (< 6h)
+        if local_path.exists():
+            age_h = (time.time() - local_path.stat().st_mtime) / 3600
+            if age_h < 6:
+                print(f"[SUPABASE] {remote_name} — cache OK ({age_h:.1f}h)")
+                continue
+
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Essayer d'abord les chunks (gros fichiers)
+        if remote_name.endswith(".csv"):
+            try:
+                if _download_chunked_csv(client, remote_name, local_path):
+                    continue
+            except Exception as e:
+                print(f"[SUPABASE] chunks non disponibles pour {remote_name} : {e}")
+
+        # Fichier normal
+        try:
+            data = client.storage.from_(SUPABASE_BUCKET).download(remote_name)
+            with open(local_path, "wb") as f:
+                f.write(data)
+            size_mb = len(data) / 1_000_000
+            print(f"[SUPABASE] ✅ {remote_name} téléchargé ({size_mb:.1f} MB)")
+        except Exception as e:
+            print(f"[SUPABASE] ⚠️  {remote_name} — erreur : {e}")
+
+
 
 
 # ============================================================
@@ -1463,6 +1560,10 @@ def mark_unprocessed(row_id):
     save_processed_ids(processed)
     return redirect(url_for("index"))
 
+
+# Téléchargement Supabase au démarrage (sur Render uniquement)
+_init_supabase_files()
+download_from_supabase()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))

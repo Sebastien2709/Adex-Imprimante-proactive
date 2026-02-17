@@ -1,7 +1,7 @@
-Flask==3.1.2
-gunicorn==23.0.0
-pandas==2.3.3
-pyarrow==22.0.0
-python-dateutil==2.9.0.post0
-pytz==2025.2
-PyYAML==6.0.3
+flask>=3.0
+gunicorn>=23.0
+pandas>=2.0
+numpy>=1.26
+pyarrow>=14.0
+python-dotenv>=1.0
+supabase>=2.0
