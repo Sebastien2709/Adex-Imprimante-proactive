@@ -52,47 +52,40 @@ def format_date_filter(value):
         return str(value)
 
 
-# Cache RAM pour kpax_history — chargé une seule fois au démarrage
-_KPAX_HISTORY_RAM = None
+def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
+    """
+    Lit kpax_history_light.csv par CHUNKS et ne garde que le serial demandé.
+    Lecture à la demande uniquement (pas de cache RAM — trop lourd pour Render free).
+    """
+    serial = (serial or "").strip()
+    if not serial or not KPAX_HISTORY_CSV.exists():
+        return pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
 
-def _get_kpax_history_ram() -> pd.DataFrame:
-    """Charge kpax_history_light.csv en RAM une seule fois."""
-    global _KPAX_HISTORY_RAM
-    if _KPAX_HISTORY_RAM is not None:
-        return _KPAX_HISTORY_RAM
-    if not KPAX_HISTORY_CSV.exists():
-        _KPAX_HISTORY_RAM = pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
-        return _KPAX_HISTORY_RAM
-    print("[KPAX] Chargement kpax_history_light.csv en RAM...")
+    chunks = []
     try:
-        df = pd.read_csv(
+        for chunk in pd.read_csv(
             KPAX_HISTORY_CSV,
             usecols=["serial_display", "color", "date", "pct"],
             dtype={"serial_display": str, "color": str},
+            chunksize=100_000,
             low_memory=False,
-        )
-        df["serial_display"] = df["serial_display"].astype(str).str.strip()
-        df["color"]          = df["color"].astype(str).str.lower().str.strip()
-        df["date"]           = pd.to_datetime(df["date"], errors="coerce")
-        df["pct"]            = pd.to_numeric(df["pct"], errors="coerce")
-        df = df.dropna(subset=["date", "pct"])
-        _KPAX_HISTORY_RAM = df
-        print(f"[KPAX] kpax_history_light.csv en RAM : {len(df)} lignes")
+        ):
+            chunk["serial_display"] = chunk["serial_display"].astype(str).str.strip()
+            sub = chunk[chunk["serial_display"] == serial]
+            if not sub.empty:
+                chunks.append(sub)
     except Exception as e:
-        print(f"[KPAX] Erreur chargement history : {e}")
-        _KPAX_HISTORY_RAM = pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
-    return _KPAX_HISTORY_RAM
-
-
-def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
-    """Filtre le cache RAM pour un serial donné — instantané."""
-    serial = (serial or "").strip()
-    if not serial:
+        print(f"[KPAX] Erreur lecture history : {e}")
         return pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
-    df = _get_kpax_history_ram()
-    if df.empty:
+
+    if not chunks:
         return pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
-    return df[df["serial_display"] == serial].copy()
+
+    df = pd.concat(chunks, ignore_index=True)
+    df["color"] = df["color"].astype(str).str.lower().str.strip()
+    df["date"]  = pd.to_datetime(df["date"], errors="coerce")
+    df["pct"]   = pd.to_numeric(df["pct"], errors="coerce")
+    return df.dropna(subset=["date", "pct"])
     return df
 
 
@@ -1616,10 +1609,8 @@ def _background_download():
     global _dl_done
     _init_supabase_files()
     download_from_supabase()
-    try:
-        _get_kpax_history_ram()
-    except Exception as e:
-        print(f"[SUPABASE] Erreur chargement history : {e}")
+    # NE PAS charger kpax_history en RAM — trop lourd (500 MB)
+    # Il sera lu par chunks à la demande dans load_kpax_history_for_serial()
     _dl_done = True
     print("[SUPABASE] ✅ Données prêtes !")
 
