@@ -1159,6 +1159,22 @@ def api_printer_history():
 
 @app.route("/", methods=["GET"])
 def index():
+    # Si le download est encore en cours, afficher page d'attente
+    if _dl_thread.is_alive() and not DATA_PATH.exists():
+        return """<!DOCTYPE html><html><head>
+        <meta charset="utf-8"><meta http-equiv="refresh" content="5">
+        <title>Chargement...</title>
+        <style>body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;
+        height:100vh;background:#0f1117;color:#e2e4e9;flex-direction:column;gap:1rem;}
+        .spinner{width:40px;height:40px;border:4px solid #2a2d35;border-top:4px solid #6c63ff;
+        border-radius:50%;animation:spin 1s linear infinite;}
+        @keyframes spin{to{transform:rotate(360deg);}}</style></head>
+        <body><div class="spinner"></div>
+        <h2>Chargement des données...</h2>
+        <p style="color:#7a7f8e">Les données se téléchargent depuis Supabase.<br>
+        Cette page se rafraîchit automatiquement toutes les 5 secondes.</p>
+        </body></html>""", 200
+
     df = get_data()
     processed_ids = load_processed_ids()
 
@@ -1589,9 +1605,22 @@ def mark_unprocessed(row_id):
     return redirect(url_for("index"))
 
 
-# Téléchargement Supabase au démarrage (sur Render uniquement)
-_init_supabase_files()
-download_from_supabase()
+# Téléchargement Supabase en ARRIÈRE-PLAN (non bloquant)
+# Gunicorn peut démarrer immédiatement, les données arrivent dans ~60s
+import threading
+
+def _background_download():
+    _init_supabase_files()
+    download_from_supabase()
+    # Charger kpax_history en RAM après le download
+    try:
+        _get_kpax_history_ram()
+    except Exception as e:
+        print(f"[SUPABASE] Erreur chargement history : {e}")
+
+_dl_thread = threading.Thread(target=_background_download, daemon=True)
+_dl_thread.start()
+print("[SUPABASE] Téléchargement démarré en arrière-plan...")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
