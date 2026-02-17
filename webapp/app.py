@@ -154,7 +154,7 @@ def _init_supabase_files():
     SUPABASE_FILES = [
         ("recommandations_toners_latest.csv", BASE_DIR / "data" / "outputs"   / "recommandations_toners_latest.csv"),
         ("kpax_last_states.csv",              BASE_DIR / "data" / "processed" / "kpax_last_states.csv"),
-        ("kpax_history_light.csv",            BASE_DIR / "data" / "processed" / "kpax_history_light.csv"),
+        # kpax_history_light.csv téléchargé à la demande (trop lourd au démarrage)
         ("contract_status.parquet",           BASE_DIR / "data" / "processed" / "contract_status.parquet"),
     ]
 
@@ -1125,7 +1125,18 @@ def api_printer_history():
     if not serial:
         return jsonify({"error": "missing serial"}), 400
 
-    # ✅ lecture CHUNKED uniquement pour ce serial (safe Render)
+    # Télécharger kpax_history depuis Supabase si absent (à la demande)
+    if not KPAX_HISTORY_CSV.exists() and SUPABASE_URL:
+        try:
+            from supabase import create_client
+            _init_supabase_files()
+            client = create_client(SUPABASE_URL, SUPABASE_KEY)
+            print(f"[SUPABASE] Téléchargement kpax_history à la demande...")
+            _download_chunked_csv(client, "kpax_history_light.csv", KPAX_HISTORY_CSV)
+        except Exception as e:
+            print(f"[SUPABASE] kpax_history introuvable : {e}")
+            return jsonify({"serial": serial, "series": {"black":[],"cyan":[],"magenta":[],"yellow":[]}}), 200
+
     hist = load_kpax_history_for_serial(serial)
 
     series = {c: [] for c in ["black", "cyan", "magenta", "yellow"]}
@@ -1168,8 +1179,11 @@ def index():
         Cette page se rafraîchit automatiquement toutes les 5 secondes.</p>
         </body></html>""", 200
 
+    import time as _time
+    _t0 = _time.time()
     df = get_data()
     processed_ids = load_processed_ids()
+    print(f"[PERF] get_data: {_time.time()-_t0:.2f}s")
 
     serial_query = request.args.get("serial_query", "").strip()
     selected_priority = request.args.get("priority", "").strip()
@@ -1348,6 +1362,7 @@ def index():
     pending_rows = int(pending_mask.sum())
     sent_rows = int((~pending_mask).sum())
 
+    print(f"[PERF] avant pagination: {_time.time()-_t0:.2f}s")
     # ── Pagination ──────────────────────────────────────────────
     PAGE_SIZE    = 50
     total_pages  = max(1, (len(grouped_printers) + PAGE_SIZE - 1) // PAGE_SIZE)
