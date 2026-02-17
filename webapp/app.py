@@ -52,32 +52,47 @@ def format_date_filter(value):
         return str(value)
 
 
+# Cache RAM pour kpax_history — chargé une seule fois au démarrage
+_KPAX_HISTORY_RAM = None
+
+def _get_kpax_history_ram() -> pd.DataFrame:
+    """Charge kpax_history_light.csv en RAM une seule fois."""
+    global _KPAX_HISTORY_RAM
+    if _KPAX_HISTORY_RAM is not None:
+        return _KPAX_HISTORY_RAM
+    if not KPAX_HISTORY_CSV.exists():
+        _KPAX_HISTORY_RAM = pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
+        return _KPAX_HISTORY_RAM
+    print("[KPAX] Chargement kpax_history_light.csv en RAM...")
+    try:
+        df = pd.read_csv(
+            KPAX_HISTORY_CSV,
+            usecols=["serial_display", "color", "date", "pct"],
+            dtype={"serial_display": str, "color": str},
+            low_memory=False,
+        )
+        df["serial_display"] = df["serial_display"].astype(str).str.strip()
+        df["color"]          = df["color"].astype(str).str.lower().str.strip()
+        df["date"]           = pd.to_datetime(df["date"], errors="coerce")
+        df["pct"]            = pd.to_numeric(df["pct"], errors="coerce")
+        df = df.dropna(subset=["date", "pct"])
+        _KPAX_HISTORY_RAM = df
+        print(f"[KPAX] kpax_history_light.csv en RAM : {len(df)} lignes")
+    except Exception as e:
+        print(f"[KPAX] Erreur chargement history : {e}")
+        _KPAX_HISTORY_RAM = pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
+    return _KPAX_HISTORY_RAM
+
+
 def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
-    """
-    Lit kpax_history_light.csv en CHUNKS et ne garde en mémoire
-    que les lignes du serial demandé.
-    """
+    """Filtre le cache RAM pour un serial donné — instantané."""
     serial = (serial or "").strip()
-    if not serial or not KPAX_HISTORY_CSV.exists():
-        return pd.DataFrame(columns=[COLUMN_SERIAL_DISPLAY, "color", "date", "pct"])
-
-    usecols = ["serial_display", "color", "date", "pct"]
-    chunks = []
-    for chunk in pd.read_csv(KPAX_HISTORY_CSV, usecols=usecols, chunksize=250_000):
-        # normalisation light (important pour match)
-        chunk["serial_display"] = chunk["serial_display"].astype(str).str.strip()
-        sub = chunk[chunk["serial_display"] == serial]
-        if not sub.empty:
-            chunks.append(sub)
-
-    if not chunks:
-        return pd.DataFrame(columns=[COLUMN_SERIAL_DISPLAY, "color", "date", "pct"])
-
-    df = pd.concat(chunks, ignore_index=True)
-    df["color"] = df["color"].astype(str).str.lower().str.strip()
-    df["date"] = pd.to_datetime(df["date"], errors="coerce")
-    df["pct"] = pd.to_numeric(df["pct"], errors="coerce")
-    df = df.dropna(subset=["date", "pct"])
+    if not serial:
+        return pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
+    df = _get_kpax_history_ram()
+    if df.empty:
+        return pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
+    return df[df["serial_display"] == serial].copy()
     return df
 
 
@@ -1324,6 +1339,16 @@ def index():
     pending_rows = int(pending_mask.sum())
     sent_rows = int((~pending_mask).sum())
 
+    # ── Pagination ──────────────────────────────────────────────
+    PAGE_SIZE    = 50
+    total_pages  = max(1, (len(grouped_printers) + PAGE_SIZE - 1) // PAGE_SIZE)
+    try:
+        current_page = max(1, min(int(request.args.get("page", 1)), total_pages))
+    except (ValueError, TypeError):
+        current_page = 1
+    start        = (current_page - 1) * PAGE_SIZE
+    grouped_printers = grouped_printers[start : start + PAGE_SIZE]
+
     return render_template(
         "index.html",
         grouped_printers=grouped_printers,
@@ -1356,6 +1381,9 @@ def index():
         pending_rows=pending_rows,
         sent_rows=sent_rows,
         nb_alertes_non_prioritaires=nb_alertes_total,
+        current_page=current_page,
+        total_pages=total_pages,
+        total_printers=len(grouped_printers) + start,
     )
 
 
