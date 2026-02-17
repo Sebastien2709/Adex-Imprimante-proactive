@@ -1160,7 +1160,7 @@ def api_printer_history():
 @app.route("/", methods=["GET"])
 def index():
     # Si le download est encore en cours, afficher page d'attente
-    if _dl_thread.is_alive() and not DATA_PATH.exists():
+    if _dl_thread is not None and not _dl_done and not DATA_PATH.exists():
         return """<!DOCTYPE html><html><head>
         <meta charset="utf-8"><meta http-equiv="refresh" content="5">
         <title>Chargement...</title>
@@ -1605,23 +1605,49 @@ def mark_unprocessed(row_id):
     return redirect(url_for("index"))
 
 
-# Téléchargement Supabase en ARRIÈRE-PLAN (non bloquant)
-# Gunicorn peut démarrer immédiatement, les données arrivent dans ~60s
+# Téléchargement Supabase déclenché au PREMIER appel HTTP
+# (pas au chargement du module — gunicorn démarre sans attendre)
 import threading
 
+_dl_thread = None
+_dl_done   = False
+
 def _background_download():
+    global _dl_done
     _init_supabase_files()
     download_from_supabase()
-    # Charger kpax_history en RAM après le download
     try:
         _get_kpax_history_ram()
     except Exception as e:
         print(f"[SUPABASE] Erreur chargement history : {e}")
+    _dl_done = True
+    print("[SUPABASE] ✅ Données prêtes !")
 
-_dl_thread = threading.Thread(target=_background_download, daemon=True)
-_dl_thread.start()
-print("[SUPABASE] Téléchargement démarré en arrière-plan...")
+@app.before_request
+def _trigger_download_once():
+    global _dl_thread
+    if _dl_thread is None and SUPABASE_URL:
+        _dl_thread = threading.Thread(target=_background_download, daemon=True)
+        _dl_thread.start()
+        print("[SUPABASE] Téléchargement démarré en arrière-plan...")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "5000"))
     app.run(host="0.0.0.0", port=port, debug=False)
+
+@app.errorhandler(500)
+def internal_error(e):
+    import traceback
+    tb = traceback.format_exc()
+    print(f"[500 ERROR]\n{tb}")
+    return f"""
+    <html><head><title>Erreur serveur</title>
+    <style>body{{font-family:monospace;background:#0f1117;color:#e2e4e9;padding:2rem}}
+    pre{{background:#1e2028;padding:1rem;border-radius:8px;overflow:auto;font-size:0.8rem;color:#ef4444}}</style>
+    </head><body>
+    <h2>⚠️ Erreur interne</h2>
+    <p>Détail de l'erreur :</p>
+    <pre>{tb}</pre>
+    <a href="/" style="color:#6c63ff">← Retour</a>
+    </body></html>
+    """, 500
