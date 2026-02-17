@@ -166,7 +166,7 @@ def _download_chunked_csv(client, remote_name: str, local_path: Path) -> bool:
         chunk_name = f"{remote_name}.chunk{i}.gz"
         gz_data    = client.storage.from_(SUPABASE_BUCKET).download(chunk_name)
         csv_bytes  = gz_mod.decompress(gz_data)
-        dfs.append(pd.read_csv(io.BytesIO(csv_bytes)))
+        dfs.append(pd.read_csv(io.BytesIO(csv_bytes), dtype={"serial_display": str}, low_memory=False))
         print(f"[SUPABASE]   chunk {i+1}/{n_chunks} OK")
 
     df = pd.concat(dfs, ignore_index=True)
