@@ -271,6 +271,7 @@ _KPAX_LAST_STATES = None
 _KPAX_HISTORY_LONG = None
 _DATA_CACHE = None          # (mtime, DataFrame)
 _CONTRACT_CACHE = None      # (mtime, DataFrame)
+_GROUPED_CACHE = {}         # {filter_hash: (grouped_printers, metadata)}
 
 
 # ============================================================
@@ -1286,10 +1287,20 @@ def index():
         sort_cols += [COLUMN_CLIENT, COLUMN_SERIAL_DISPLAY]
         filtered = filtered.sort_values(sort_cols)
 
-    grouped_printers = []
-    if not filtered.empty:
-        for serial_display, sub in filtered.groupby(COLUMN_SERIAL_DISPLAY):
-            rows = sub.to_dict(orient="records")
+    # Cache groupby basé sur hash des filtres
+    import hashlib
+    filter_key = f"{serial_query}|{selected_priority}|{selected_type_liv}|{show_only_pending}|{rupture_mode}|{filtre_negatif}|{filtre_inchange}|{len(filtered)}"
+    filter_hash = hashlib.md5(filter_key.encode()).hexdigest()[:8]
+    
+    if filter_hash in _GROUPED_CACHE:
+        grouped_printers = _GROUPED_CACHE[filter_hash]
+        print(f"[PERF] grouped_printers cache HIT: {filter_hash}")
+    else:
+        print(f"[PERF] grouped_printers cache MISS: {filter_hash}")
+        grouped_printers = []
+        if not filtered.empty:
+            for serial_display, sub in filtered.groupby(COLUMN_SERIAL_DISPLAY, sort=False):
+                rows = sub.where(sub.notna(), None).to_dict(orient="records")
 
             min_days_left = float(sub[COLUMN_DAYS].min()) if COLUMN_DAYS in sub.columns and sub[COLUMN_DAYS].notna().any() else None
 
@@ -1345,6 +1356,10 @@ def index():
                 "alerte_fin_proche": alerte_fin_proche,
                 "date_fin_contrat": date_fin_contrat,
             })
+        
+        _GROUPED_CACHE[filter_hash] = grouped_printers
+        if len(_GROUPED_CACHE) > 20:  # LRU simple
+            _GROUPED_CACHE.pop(list(_GROUPED_CACHE.keys())[0])
 
     priority_counts = {}
     color_counts = {}

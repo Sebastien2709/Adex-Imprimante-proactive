@@ -340,6 +340,47 @@
     .badge-prio-2 { background: var(--prio2); }
     .badge-prio-3 { background: var(--prio3); color:#1a1a1a; }
     .badge-prio-4 { background: var(--prio4); }
+    .badge-prio-0 {
+      background: #7c3aed;
+      animation: pulse-p0 1.4s ease-in-out infinite;
+    }
+    @keyframes pulse-p0 {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.7); }
+      50%       { box-shadow: 0 0 0 6px rgba(124,58,237,0); }
+    }
+    .days-negative { color: #ef4444; font-weight: 700; }
+    .badge-unchanged {
+      display: inline-block;
+      background: rgba(124,58,237,0.15);
+      border: 1px solid #7c3aed;
+      color: #a78bfa;
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+    }
+    .btn-unchanged {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(124,58,237,0.15);
+      border: 1px solid #7c3aed;
+      color: #a78bfa;
+      border-radius: 8px;
+      padding: 0.3rem 0.8rem;
+      font-size: 0.8rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .btn-unchanged:hover { background: rgba(124,58,237,0.3); text-decoration: none; }
+    .badge-count-purple {
+      background: #7c3aed;
+      color: #fff;
+      border-radius: 99px;
+      padding: 1px 7px;
+      font-size: 0.72rem;
+    }
 
     /* Type-livraison badge */
     .badge-type {
@@ -620,38 +661,6 @@
     /* ============================================================
        SCROLLBAR (webkit)
        ============================================================ */
-    /* ============================================================
-       PAGINATION
-       ============================================================ */
-    .pagination-bar {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      padding: 1.5rem 0 2rem;
-      flex-wrap: wrap;
-    }
-    .btn-page {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 0.35rem 0.75rem;
-      font-size: 0.82rem;
-      color: var(--text-muted);
-      text-decoration: none;
-      transition: all 0.15s;
-      font-family: 'DM Mono', monospace;
-    }
-    .btn-page:hover { border-color: var(--accent); color: var(--text); text-decoration: none; }
-    .btn-page.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-      font-weight: 700;
-    }
-    .btn-page.disabled { opacity: 0.35; pointer-events: none; }
-    .page-info { font-size: 0.8rem; color: var(--text-muted); }
-
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: var(--bg); }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -740,6 +749,28 @@
       <input type="hidden" name="pending" value="1">
     {% endif %}
 
+    <!-- Filtres rapides -->
+    <div class="row g-2 mt-2">
+      <div class="col-auto">
+        <label class="form-label">En retard</label>
+        <div class="kpax-group">
+          <input type="radio" name="filtre_negatif" id="fn_all" value="" {% if not filtre_negatif %}checked{% endif %}>
+          <label for="fn_all">Tous</label>
+          <input type="radio" name="filtre_negatif" id="fn_p0" value="1" {% if filtre_negatif == "1" %}checked{% endif %}>
+          <label for="fn_p0">🔴 P0 uniquement</label>
+        </div>
+      </div>
+      <div class="col-auto">
+        <label class="form-label">Toner inchangé</label>
+        <div class="kpax-group">
+          <input type="radio" name="filtre_inchange" id="fi_all" value="" {% if not filtre_inchange %}checked{% endif %}>
+          <label for="fi_all">Tous</label>
+          <input type="radio" name="filtre_inchange" id="fi_inc" value="1" {% if filtre_inchange == "1" %}checked{% endif %}>
+          <label for="fi_inc">🔔 Inchangés</label>
+        </div>
+      </div>
+    </div>
+
     <div class="filter-actions">
       <input type="hidden" name="page" value="1">
       <button type="submit" class="btn-filter">Filtrer</button>
@@ -804,7 +835,11 @@
         <!-- Priority badge top-right -->
         <div>
           {% if printer.min_priority is not none %}
-            <span class="badge-prio badge-prio-{{ printer.min_priority }}">P{{ printer.min_priority }}</span>
+            {% if printer.min_priority == 0 %}
+              <span class="badge-prio badge-prio-0">P0</span>
+            {% else %}
+              <span class="badge-prio badge-prio-{{ printer.min_priority }}">P{{ printer.min_priority }}</span>
+            {% endif %}
           {% endif %}
         </div>
       </div>
@@ -838,12 +873,26 @@
               <tr class="{% if rid in processed_ids %}row-sent{% endif %}">
                 <td style="color:var(--text-muted)">{{ rid }}</td>
                 <td><strong>{{ r.get(col_toner, '') }}</strong></td>
-                <td>{{ r.get(col_days, '—') }}</td>
+                <td>
+                  {% set d = r.get('jours_reel', r.get(col_days)) %}
+                  {% if d is not none and d != '' and d != '—' %}
+                    {% if d|float < 0 %}
+                      <span class="days-negative">{{ d|int }}j ⚠️</span>
+                    {% else %}
+                      {{ d|int }}
+                    {% endif %}
+                  {% else %}—{% endif %}
+                </td>
                 <td>{{ r.get(col_stockout, '—') }}</td>
 
                 <td>
                   {% if prio is not none %}
-                    <span class="badge-prio badge-prio-{{ prio|int }}">P{{ prio|int }}</span>
+                    {% set prio_int = prio|int %}
+                    {% if prio_int == 0 %}
+                      <span class="badge-prio badge-prio-0">P0</span>
+                    {% else %}
+                      <span class="badge-prio badge-prio-{{ prio_int }}">P{{ prio_int }}</span>
+                    {% endif %}
                   {% endif %}
                 </td>
 
@@ -878,7 +927,13 @@
                   {% endif %}
                 </td>
 
-                <td style="color:var(--text-muted); max-width:140px;">{{ r.get(col_comment, '') }}</td>
+                <td style="color:var(--text-muted); max-width:160px;">
+                  {% set comment = r.get(col_comment, '')|string %}
+                  {% if 'Cartouche non changée' in comment or 'inchangé' in comment|lower or 'Envoyé il y a' in comment %}
+                    <span class="badge-unchanged">🔔 Toner inchangé</span><br>
+                  {% endif %}
+                  {{ comment }}
+                </td>
 
                 <!-- Consumption modal trigger -->
                 <td>
@@ -920,39 +975,6 @@
       <div class="icon">🔍</div>
       <div>Aucune recommandation trouvée avec ces filtres.</div>
     </div>
-  {% endif %}
-
-  <!-- ---- PAGINATION ---- -->
-  {% if total_pages > 1 %}
-  <div class="pagination-bar">
-
-    {# Bouton Précédent #}
-    {% if current_page > 1 %}
-      <a href="?{{ request.query_string.decode() | replace('page=' ~ current_page, '') }}&page={{ current_page - 1 }}" class="btn-page">← Préc.</a>
-    {% else %}
-      <span class="btn-page disabled">← Préc.</span>
-    {% endif %}
-
-    {# Numéros de pages #}
-    {% for p in range(1, total_pages + 1) %}
-      {% if p == current_page %}
-        <span class="btn-page active">{{ p }}</span>
-      {% elif p <= 2 or p >= total_pages - 1 or (p >= current_page - 2 and p <= current_page + 2) %}
-        <a href="?{{ request.query_string.decode() | replace('page=' ~ current_page, '') }}&page={{ p }}" class="btn-page">{{ p }}</a>
-      {% elif p == 3 or p == total_pages - 2 %}
-        <span class="page-info">…</span>
-      {% endif %}
-    {% endfor %}
-
-    {# Bouton Suivant #}
-    {% if current_page < total_pages %}
-      <a href="?{{ request.query_string.decode() | replace('page=' ~ current_page, '') }}&page={{ current_page + 1 }}" class="btn-page">Suiv. →</a>
-    {% else %}
-      <span class="btn-page disabled">Suiv. →</span>
-    {% endif %}
-
-    <span class="page-info">Page {{ current_page }} / {{ total_pages }}</span>
-  </div>
   {% endif %}
 
 </div><!-- /main-wrap -->
@@ -1177,6 +1199,32 @@
   slopeColorSel.addEventListener('change', () => { if (currentSerial) loadAndRender(currentSerial, slopeColorSel.value); });
   slopeModal.addEventListener('hidden.bs.modal', () => { destroySlopeChart(); currentSerial = null; setWarn(null); slopeValuePill.textContent = 'pente : —'; });
 </script>
+
+
+  <!-- PAGINATION -->
+  {% if total_pages is defined and total_pages > 1 %}
+  <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;padding:1.5rem 0 2rem;flex-wrap:wrap;">
+    {% if current_page > 1 %}
+      <a href="?{{ request.query_string.decode().replace('page=' ~ current_page, '') }}&page={{ current_page - 1 }}"
+         style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:var(--text-muted);text-decoration:none;">← Préc.</a>
+    {% endif %}
+    {% for p in range(1, total_pages + 1) %}
+      {% if p == current_page %}
+        <span style="background:#6c63ff;border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:#fff;font-weight:700;">{{ p }}</span>
+      {% elif p <= 2 or p >= total_pages - 1 or (p >= current_page - 2 and p <= current_page + 2) %}
+        <a href="?{{ request.query_string.decode().replace('page=' ~ current_page, '') }}&page={{ p }}"
+           style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:var(--text-muted);text-decoration:none;">{{ p }}</a>
+      {% elif p == 3 or p == total_pages - 2 %}
+        <span style="color:var(--text-muted)">…</span>
+      {% endif %}
+    {% endfor %}
+    {% if current_page < total_pages %}
+      <a href="?{{ request.query_string.decode().replace('page=' ~ current_page, '') }}&page={{ current_page + 1 }}"
+         style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:var(--text-muted);text-decoration:none;">Suiv. →</a>
+    {% endif %}
+    <span style="font-size:0.8rem;color:var(--text-muted);">Page {{ current_page }} / {{ total_pages }}</span>
+  </div>
+  {% endif %}
 
 </body>
 </html>
