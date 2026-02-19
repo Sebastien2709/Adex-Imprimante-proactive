@@ -45,17 +45,14 @@ def fmt_date_filter(value):
 _HISTORY_CACHE: dict = {}
 _HISTORY_TTL = 3600  # 1h
 
-# Parquet indexé par serial — beaucoup plus rapide que CSV scan
-KPAX_HISTORY_PARQUET = BASE_DIR / "data" / "processed" / "kpax_history_light.parquet"
-
 
 def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
     """
-    Charge l'historique KPAX pour UN serial uniquement.
+    Charge l'historique KPAX pour UN serial.
     1. Cache mémoire (TTL 1h)
-    2. Parquet avec filter pushdown  — O(1), rapide
-    3. CSV chunked (fallback lent)
-    4. DataFrame vide               — graphe desactive proprement
+    2. Parquet avec filter pushdown — O(1)
+    3. CSV chunked (fallback)
+    4. DataFrame vide — graphe désactivé proprement
     """
     serial = (serial or "").strip()
     empty = pd.DataFrame(columns=["serial_display", "color", "date", "pct"])
@@ -66,7 +63,6 @@ def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
     if cached and time.time() - cached[0] < _HISTORY_TTL:
         return cached[1]
 
-    # Parquet (lecture rapide, filtre pushdown)
     if KPAX_HISTORY_PARQUET.exists():
         try:
             import pyarrow.parquet as pq
@@ -77,15 +73,14 @@ def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
             )
             df = table.to_pandas()
             df["color"] = df["color"].astype(str).str.lower().str.strip()
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df["pct"] = pd.to_numeric(df["pct"], errors="coerce")
+            df["date"]  = pd.to_datetime(df["date"], errors="coerce")
+            df["pct"]   = pd.to_numeric(df["pct"], errors="coerce")
             df = df.dropna(subset=["date", "pct"])
             _HISTORY_CACHE[serial] = (time.time(), df)
             return df
         except Exception as e:
             print(f"[HISTORY] Parquet error {serial}: {e}")
 
-    # CSV chunked fallback (si parquet absent)
     if KPAX_HISTORY_CSV.exists():
         try:
             chunks = []
@@ -99,8 +94,8 @@ def load_kpax_history_for_serial(serial: str) -> pd.DataFrame:
             if chunks:
                 df = pd.concat(chunks, ignore_index=True)
                 df["color"] = df["color"].astype(str).str.lower().str.strip()
-                df["date"] = pd.to_datetime(df["date"], errors="coerce")
-                df["pct"] = pd.to_numeric(df["pct"], errors="coerce")
+                df["date"]  = pd.to_datetime(df["date"], errors="coerce")
+                df["pct"]   = pd.to_numeric(df["pct"], errors="coerce")
                 df = df.dropna(subset=["date", "pct"])
                 _HISTORY_CACHE[serial] = (time.time(), df)
                 return df
@@ -142,19 +137,31 @@ def health():
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
-DATA_PATH      = BASE_DIR / "data" / "outputs"   / "recommandations_toners_latest.csv"
+DATA_PATH = BASE_DIR / "data" / "outputs" / "recommandations_toners_latest.csv"
 PROCESSED_JSON = BASE_DIR / "data" / "processed" / "processed_recommendations_ui.json"
-KPAX_LAST_CSV  = BASE_DIR / "data" / "processed" / "kpax_last_states.csv"
-KPAX_HISTORY_CSV = BASE_DIR / "data" / "processed" / "kpax_history_light.csv"
-KPAX_PATH      = BASE_DIR / "data" / "processed" / "kpax_consumables.parquet"
-FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
 
+# CSV léger (commité) : dernier état KPAX par (imprimante, couleur)
+KPAX_LAST_CSV = BASE_DIR / "data" / "processed" / "kpax_last_states.csv"
+
+# CSV léger (commité) : historique KPAX (format long) pour le graphe (safe Render)
+KPAX_HISTORY_CSV = BASE_DIR / "data" / "processed" / "kpax_history_light.csv"
+
+# Parquet lourd (LOCAL seulement si tu l'as). Sur Render, ne pas le commit.
+KPAX_PATH = BASE_DIR / "data" / "processed" / "kpax_consumables.parquet"
+
+# Active/désactive l'historique via parquet (LOCAL)
+# Sur Render tu laisses à 0
 KPAX_HISTORY_ENABLED = os.getenv("KPAX_HISTORY_ENABLED", "0") == "1"
+
+FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
 
 # Item ledger — livraisons réelles de toners
 ITEM_LEDGER_PARQUET = BASE_DIR / "data" / "processed" / "item_ledger.parquet"
 ITEM_LEDGER_CSV     = BASE_DIR / "data" / "interim"   / "item_ledger.csv"
 LEDGER_WINDOW_DAYS  = 90
+
+# Parquet historique KPAX (léger, filtré par serial)
+KPAX_HISTORY_PARQUET = BASE_DIR / "data" / "processed" / "kpax_history_light.parquet"
 
 # ============================================================
 # SUPABASE — téléchargement au démarrage
@@ -164,13 +171,11 @@ SUPABASE_KEY    = os.getenv("SUPABASE_KEY", "")
 SUPABASE_BUCKET = "toner-data"
 CACHE_MAX_AGE_H = 6
 
-# kpax_history_light.csv EXCLU (2.7M lignes, trop lourd).
-# On télécharge le parquet (même données, 5-10x plus petit, lecture filtrée par serial).
 SUPABASE_FILES = {
-    "recommandations_toners_latest.csv": DATA_PATH,
-    "kpax_last_states.csv":              KPAX_LAST_CSV,
+    "recommandations_toners_latest.csv": BASE_DIR / "data" / "outputs"   / "recommandations_toners_latest.csv",
+    "kpax_last_states.csv":              BASE_DIR / "data" / "processed" / "kpax_last_states.csv",
     "contract_status.parquet":           BASE_DIR / "data" / "processed" / "contract_status.parquet",
-    "kpax_history_light.parquet":        KPAX_HISTORY_PARQUET,
+    "kpax_history_light.parquet":        BASE_DIR / "data" / "processed" / "kpax_history_light.parquet",
 }
 
 
@@ -185,15 +190,14 @@ def _supabase_client():
         return None
 
 
-def _is_fresh(path: Path) -> bool:
+def _is_fresh(path) -> bool:
     if not path.exists():
         return False
     return (time.time() - path.stat().st_mtime) / 3600 < CACHE_MAX_AGE_H
 
 
-def _download_file(client, remote_name: str, local_path: Path) -> bool:
+def _download_file(client, remote_name: str, local_path) -> bool:
     local_path.parent.mkdir(parents=True, exist_ok=True)
-    # Essaie chunks gzip (gros fichiers)
     try:
         meta = json.loads(client.storage.from_(SUPABASE_BUCKET).download(f"{remote_name}.meta.json").decode())
         n = meta["chunks"]
@@ -208,7 +212,6 @@ def _download_file(client, remote_name: str, local_path: Path) -> bool:
         return True
     except Exception:
         pass
-    # Fichier normal
     try:
         data = client.storage.from_(SUPABASE_BUCKET).download(remote_name)
         with open(local_path, "wb") as f:
@@ -225,7 +228,7 @@ def download_data_from_supabase():
     if client is None:
         print("[SUPABASE] Pas de credentials → mode local")
         return
-    print(f"[SUPABASE] Vérif cache ({CACHE_MAX_AGE_H}h max)...")
+    print(f"[SUPABASE] Vérif cache ({CACHE_MAX_AGE_H}h)...")
     for remote_name, local_path in SUPABASE_FILES.items():
         if _is_fresh(local_path):
             age = (time.time() - local_path.stat().st_mtime) / 3600
@@ -234,7 +237,7 @@ def download_data_from_supabase():
             _download_file(client, remote_name, local_path)
 
 
-# Appel au démarrage — fonctionne avec Gunicorn ET python app.py
+# Appel au démarrage (Gunicorn + python app.py)
 download_data_from_supabase()
 
 
@@ -330,13 +333,10 @@ def _stable_key(serial: str, couleur: str) -> str:
     return f"{str(serial).strip().lower()}|{str(couleur).strip().lower()}"
 
 
-# ============================================================
-# ITEM LEDGER — livraisons réelles (toner_inchange)
-# ============================================================
-
+# ── Item Ledger ───────────────────────────────────────────────────────────────
 _COULEUR_MAP = {
     "toner noir": "black", "toner black": "black", "noir": "black", "black": "black",
-    "toner cyan": "cyan",  "cyan": "cyan",
+    "toner cyan": "cyan", "cyan": "cyan",
     "toner magenta": "magenta", "magenta": "magenta",
     "toner jaune": "yellow", "toner yellow": "yellow", "jaune": "yellow", "yellow": "yellow",
 }
@@ -357,7 +357,8 @@ def load_item_ledger() -> pd.DataFrame:
         return _LEDGER_CACHE
     empty = pd.DataFrame(columns=["serial_display", "couleur_norm", "date_livraison"])
     df = None
-    for path, reader in [(ITEM_LEDGER_PARQUET, pd.read_parquet), (ITEM_LEDGER_CSV, lambda p: pd.read_csv(p, low_memory=False))]:
+    for path, reader in [(ITEM_LEDGER_PARQUET, pd.read_parquet),
+                         (ITEM_LEDGER_CSV, lambda p: pd.read_csv(p, low_memory=False))]:
         if path.exists():
             try:
                 df = reader(path)
@@ -369,24 +370,20 @@ def load_item_ledger() -> pd.DataFrame:
         print("[LEDGER] Aucun fichier → toner_inchange désactivé")
         _LEDGER_CACHE = empty
         return _LEDGER_CACHE
-
     df.columns = [c.strip().strip("$") for c in df.columns]
     cols = list(df.columns)
-    serial_col = next((c for c in ["No. serie","No serie","serial","serial_display"] if c in cols), None) \
-                 or next((c for c in cols if "serie" in c.lower() or "serial" in c.lower()), None)
+    serial_col = next((c for c in ["No. serie","No serie","serial","serial_display"] if c in cols), None)                  or next((c for c in cols if "serie" in c.lower() or "serial" in c.lower()), None)
     date_col   = next((c for c in ["Date compta","date_compta","date","Date"] if c in cols), None)
     type_col   = next((c for c in ["Type conso","type_conso","Type conso general","Designation"] if c in cols), None)
-
     if not serial_col or not date_col or not type_col:
         print(f"[LEDGER] Colonnes manquantes. Dispo: {cols}")
         _LEDGER_CACHE = empty
         return _LEDGER_CACHE
-
     out = pd.DataFrame()
     out["serial_display"] = df[serial_col].astype(str).str.strip().str.strip("$")
     out["date_livraison"] = pd.to_datetime(df[date_col].astype(str).str.strip().str.strip("$"), dayfirst=True, errors="coerce")
     out["couleur_norm"]   = df[type_col].astype(str).apply(_norm_couleur_ledger)
-    out = out.dropna(subset=["serial_display", "date_livraison", "couleur_norm"])
+    out = out.dropna(subset=["serial_display","date_livraison","couleur_norm"])
     cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=LEDGER_WINDOW_DAYS)
     out = out[out["date_livraison"] >= cutoff].reset_index(drop=True)
     print(f"[LEDGER] {len(out)} livraisons ({LEDGER_WINDOW_DAYS}j)")
@@ -395,135 +392,35 @@ def load_item_ledger() -> pd.DataFrame:
 
 
 def enrich_with_toner_inchange(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    ⚡ 100% vectorisé — zéro iterrows.
-    Détecte toners livrés (item_ledger) mais KPAX < 10%.
-    """
+    """⚡ 100% vectorisé — zéro iterrows."""
     ledger = load_item_ledger()
     df["toner_inchange"]       = False
     df["toner_inchange_jours"] = pd.NA
-
     if ledger.empty:
         return df
-
     today = pd.Timestamp.today().normalize()
-
-    # Dernière livraison par (serial, couleur)
     last_liv = (
         ledger.sort_values("date_livraison", ascending=False)
-        .drop_duplicates(subset=["serial_display", "couleur_norm"])
-        [["serial_display", "couleur_norm", "date_livraison"]]
+        .drop_duplicates(subset=["serial_display","couleur_norm"])
+        [["serial_display","couleur_norm","date_livraison"]]
         .rename(columns={"date_livraison": "_last_liv"})
     )
-
-    # Colonne couleur normalisée dans df
     col_src = "couleur_norm" if "couleur_norm" in df.columns else ("couleur" if "couleur" in df.columns else COLUMN_TONER)
     df["_couleur_key"] = df[col_src].astype(str).str.lower().str.strip()
-
-    merged = df.merge(
-        last_liv,
-        left_on=[COLUMN_SERIAL_DISPLAY, "_couleur_key"],
-        right_on=["serial_display", "couleur_norm"],
-        how="left",
-        suffixes=("", "_ledger"),
-    )
-
+    merged = df.merge(last_liv, left_on=[COLUMN_SERIAL_DISPLAY,"_couleur_key"],
+                      right_on=["serial_display","couleur_norm"], how="left", suffixes=("","_ledger"))
     pct = pd.to_numeric(merged[COLUMN_LAST_PCT], errors="coerce")
-    has_livraison = merged["_last_liv"].notna()
-    still_low     = pct.isna() | (pct < 10)
-    mask          = has_livraison & still_low
-
+    mask = merged["_last_liv"].notna() & (pct.isna() | (pct < 10))
     jours = (today - merged["_last_liv"]).dt.days.where(mask)
-
     df["toner_inchange"]       = mask.values
     df["toner_inchange_jours"] = jours.values
     df = df.drop(columns=["_couleur_key"], errors="ignore")
-
     print(f"[TONER_INCHANGE] {int(mask.sum())} toner(s) livrés non remplacés")
     return df
 
 
 # ============================================================
-# COMMENTAIRES CONTEXTUELS — 100% vectorisé (np.select)
-# ============================================================
-
-def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
-    """Remplace les commentaires CSV par des messages précis. Zéro iterrows."""
-    if COLUMN_COMMENT not in df.columns:
-        df[COLUMN_COMMENT] = ""
-
-    # Nb toners par client → regroupement
-    if COLUMN_CLIENT in df.columns:
-        nb_client = df.groupby(COLUMN_CLIENT)[COLUMN_CLIENT].transform("count")
-    else:
-        nb_client = pd.Series(1, index=df.index)
-
-    prio  = pd.to_numeric(df.get(COLUMN_PRIORITY),  errors="coerce")
-    jours = pd.to_numeric(df.get("jours_display"),   errors="coerce")
-    pct   = pd.to_numeric(df.get(COLUMN_LAST_PCT),   errors="coerce")
-    fallback = df.get("fallback_p4", pd.Series(False, index=df.index)).fillna(False).astype(bool)
-
-    overdue   = (-jours).clip(lower=0).fillna(0).astype(int).astype(str)
-    days_str  = jours.fillna(0).astype(int).astype(str) + "j"
-    pct_str   = pct.fillna(0).astype(int).astype(str) + "%"
-    others    = (nb_client - 1).clip(lower=0).astype(int).astype(str)
-
-    # Masques
-    m_p0    = (prio == 0) | (jours < 0)
-    m_vide  = pct == 0
-    m_p1    = (~m_p0) & ((prio == 1) | (jours.between(0, 3, inclusive="both")))
-    m_p1_q  = m_p1 & (pct <= 1)
-    m_p1_u  = m_p1 & (pct > 1) & (pct <= 5)
-    m_p1_n  = m_p1 & (~m_p1_q) & (~m_p1_u)
-    m_p2    = (~m_p0) & (~m_p1) & ((prio == 2) | (jours.between(4, 14, inclusive="both")))
-    m_p2r   = m_p2 & (nb_client > 1)
-    m_p3    = (~m_p0) & (~m_p1) & (~m_p2) & ((prio == 3) | (jours.between(15, 30, inclusive="both")))
-    m_p3r   = m_p3 & (nb_client > 1)
-    m_p4    = (prio == 4) | fallback
-    m_p4_0  = m_p4 & (pct == 0)
-    m_p4_c  = m_p4 & (pct > 0) & (pct <= 1)
-    m_p4_b  = m_p4 & (pct > 1)
-
-    conditions = [
-        m_p0 & m_vide,
-        m_p0 & ~m_vide,
-        m_p1_q,
-        m_p1_u,
-        m_p1_n,
-        m_p2r,
-        m_p2,
-        m_p3r,
-        m_p3,
-        m_p4_0,
-        m_p4_c,
-        m_p4_b,
-    ]
-    choices = [
-        "Rupture confirmée depuis " + overdue + "j — toner vide",
-        "Date de rupture dépassée de " + overdue + "j",
-        "Toner quasi vide — envoyer immédiatement",
-        "Rupture dans " + days_str + " — urgent",
-        "Rupture dans " + days_str + " — prioriser",
-        "Prévoir envoi sous " + days_str + " — à regrouper avec " + others + " autre(s)",
-        "Prévoir envoi sous " + days_str,
-        "À planifier sous " + days_str + " — " + nb_client.astype(int).astype(str) + " toner(s) à regrouper",
-        "À planifier sous " + days_str,
-        "Toner vide — non remonté par le ML",
-        "Niveau critique détecté par KPAX",
-        "Toner bas (" + pct_str + ") — surveiller",
-    ]
-
-    new_comments = pd.Series(np.select(conditions, choices, default="Vérifier état du toner"), index=df.index)
-
-    # Garde les commentaires contrat (⚠️ / ⏰) tels quels
-    existing = df[COLUMN_COMMENT].astype(str).str.strip()
-    mask_keep = existing.str.startswith("⚠️") | existing.str.startswith("⏰")
-    df[COLUMN_COMMENT] = new_comments.where(~mask_keep, existing)
-    return df
-
-
-# ============================================================
-# SLOPES MAP — vectorisé (plus d'iterrows)
+# SLOPES MAP (lazy-load)
 # ============================================================
 
 def load_slopes_map():
@@ -533,29 +430,18 @@ def load_slopes_map():
     try:
         df   = pd.read_parquet(FORECASTS_PATH)
         cols = list(df.columns)
-
-        serial_col = next((c for c in ["serial_display","serial","$no serie$"] if c in cols), None) \
-                     or next((c for c in cols if "serial" in c.lower() or "serie" in c.lower()), None)
-        color_col  = next((c for c in ["color","couleur","toner_color","couleur_code"] if c in cols), None) \
-                     or next((c for c in cols if "color" in c.lower() or "couleur" in c.lower()), None)
-        slope_col  = next((c for c in ["slope","slope_pct_per_day","pct_per_day","daily_slope"] if c in cols), None) \
-                     or next((c for c in cols if "slope" in c.lower()), None)
-
+        serial_col = next((c for c in ["serial_display","serial","$no serie$"] if c in cols), None)                      or next((c for c in cols if "serial" in c.lower() or "serie" in c.lower()), None)
+        color_col  = next((c for c in ["color","couleur","toner_color","couleur_code"] if c in cols), None)                      or next((c for c in cols if "color" in c.lower() or "couleur" in c.lower()), None)
+        slope_col  = next((c for c in ["slope","slope_pct_per_day","pct_per_day","daily_slope"] if c in cols), None)                      or next((c for c in cols if "slope" in c.lower()), None)
         if not serial_col or not color_col or not slope_col:
             print("[SLOPES] Colonnes non détectées:", cols)
             return {}
-
         out = df[[serial_col, color_col, slope_col]].copy()
         out["serial_display"] = out[serial_col].astype(str).str.replace("$","",regex=False).str.strip()
         out["color_norm"]     = out[color_col].astype(str).str.lower().str.strip()
         out["slope_val"]      = pd.to_numeric(out[slope_col], errors="coerce")
         out = out.dropna(subset=["serial_display","color_norm","slope_val"])
-
-        # ⚡ set_index au lieu d'iterrows
-        slopes_map = (
-            out.set_index(["serial_display","color_norm"])["slope_val"]
-            .to_dict()
-        )
+        slopes_map = out.set_index(["serial_display","color_norm"])["slope_val"].to_dict()
         print(f"[SLOPES] {len(slopes_map)} pentes chargées")
         return slopes_map
     except Exception as e:
@@ -905,48 +791,73 @@ def _load_data_from_disk():
         low["last_pct"] = pd.to_numeric(low["last_pct"], errors="coerce")
         low = low[low["last_pct"].notna() & (low["last_pct"] < 3)]
 
-        # ⚡ Vectorisé : merge low avec _serial_info, filtre, construit extras d'un coup
+        extras = []
         if not low.empty:
-            # Filtre ceux déjà recommandés
-            low["_pair"] = list(zip(low["serial_display"], low["color"]))
-            low = low[~low["_pair"].isin(existing_pairs)].drop(columns=["_pair"])
+            for _, row in low.iterrows():
+                s = row["serial_display"]
+                c = row["color"]
 
-            # Enrichir avec infos client/contrat via _serial_info
-            info_df = pd.DataFrame.from_dict(_serial_info, orient="index").reset_index()
-            info_df.columns = ["serial_display", "client_name", "contract_no", "city", "type_liv"]
-            low = low.merge(info_df, on="serial_display", how="left")
-            low = low[low["contract_no"].notna() & (low["contract_no"].str.strip() != "")]
+                # si deja recommande => rien
+                if (s, c) in existing_pairs:
+                    continue
 
-            if not low.empty:
-                last_update_dt = pd.to_datetime(low["last_update"], errors="coerce")
-                days_since_series = (today - last_update_dt).dt.days
-                rupture_series = days_since_series.isna() | (days_since_series > KPAX_STALE_DAYS)
+                # lookup O(1) au lieu de df[df[...]==s]
+                info = _serial_info.get(s, {})
+                client_name = info.get("client", "")
+                contract_no = info.get("contract", "")
+                city = info.get("city", "")
+                type_liv = info.get("type_liv", "")
 
-                max_id = int(df[COLUMN_ID].max()) if COLUMN_ID in df.columns and df[COLUMN_ID].notna().any() else 0
-                extras_df = pd.DataFrame({
-                    COLUMN_SERIAL:        low["serial_display"].values,
-                    COLUMN_SERIAL_DISPLAY:low["serial_display"].values,
-                    COLUMN_TONER:         low["color"].values,
-                    "couleur":            low["color"].values,
-                    "couleur_norm":       low["color"].values,
-                    COLUMN_DAYS:          pd.NA,
-                    COLUMN_STOCKOUT:      pd.NA,
-                    COLUMN_PRIORITY:      4,
-                    COLUMN_CLIENT:        low["client_name"].values,
-                    COLUMN_CONTRACT:      low["contract_no"].values,
-                    COLUMN_CITY:          low["city"].values,
-                    COLUMN_TYPE_LIV:      low["type_liv"].values,
-                    COLUMN_COMMENT:       "",
-                    COLUMN_LAST_UPDATE:   low["last_update"].values,
-                    COLUMN_LAST_PCT:      pd.to_numeric(low["last_pct"], errors="coerce").values,
-                    "days_since_last":    days_since_series.values,
-                    "rupture_kpax":       rupture_series.values,
-                    "warning_incoherence":False,
-                    "fallback_p4":        True,
-                })
-                extras_df[COLUMN_ID] = range(max_id + 1, max_id + 1 + len(extras_df))
-                df = pd.concat([df, extras_df], ignore_index=True)
-                print(f"[P4] {len(extras_df)} toner(s) P4 ajoutés (KPAX < 3%, avec contrat)")
+                # Si pas de contrat => on ignore (pas de P4)
+                if not contract_no or contract_no.strip() == "":
+                    continue
+
+                # Calculer days_since_last et rupture_kpax pour cette ligne P4
+                last_update_val = row.get("last_update")
+                if pd.notna(last_update_val):
+                    last_update_dt = pd.to_datetime(last_update_val, errors="coerce")
+                    if pd.notna(last_update_dt):
+                        days_since = (today - last_update_dt).days
+                        rupture_flag = days_since > KPAX_STALE_DAYS
+                    else:
+                        days_since = pd.NA
+                        rupture_flag = True
+                else:
+                    days_since = pd.NA
+                    rupture_flag = True
+
+                extras.append(
+                    {
+                        COLUMN_SERIAL: s,
+                        COLUMN_SERIAL_DISPLAY: s,
+                        COLUMN_TONER: c,
+                        "couleur": c,
+                        "couleur_norm": c,
+                        COLUMN_DAYS: pd.NA,
+                        COLUMN_STOCKOUT: pd.NA,
+                        COLUMN_PRIORITY: 4,
+                        COLUMN_CLIENT: client_name,
+                        COLUMN_CONTRACT: contract_no,
+                        COLUMN_CITY: city,
+                        COLUMN_TYPE_LIV: type_liv if type_liv else pd.NA,
+                        COLUMN_COMMENT: "",
+                        COLUMN_LAST_UPDATE: last_update_val,
+                        COLUMN_LAST_PCT: float(row["last_pct"]) if pd.notna(row["last_pct"]) else pd.NA,
+                        "days_since_last": days_since,
+                        "rupture_kpax": rupture_flag,
+                        "warning_incoherence": False,
+                        "fallback_p4": True,
+                    }
+                )
+
+        if extras:
+            extra_df = pd.DataFrame(extras)
+
+            max_id = int(df[COLUMN_ID].max()) if COLUMN_ID in df.columns and df[COLUMN_ID].notna().any() else 0
+            extra_df[COLUMN_ID] = range(max_id + 1, max_id + 1 + len(extra_df))
+
+            df = pd.concat([df, extra_df], ignore_index=True)
+            print(f"[P4] {len(extras)} toner(s) ajoute(s) en priorite 4 (< 3%, avec contrat)")
 
     # colonne fallback_p4 propre pour tout le DF
     if "fallback_p4" not in df.columns:
@@ -989,7 +900,7 @@ def _load_data_from_disk():
         if nb_p0:
             print(f"[P0] {nb_p0} toner(s) en P0")
 
-    # Dédoublonnage : 1 ligne par (serial, couleur), contrat_maintenance prioritaire
+    # Dédoublonnage : 1 ligne par (serial, couleur)
     if COLUMN_TYPE_LIV in df.columns and "couleur_norm" in df.columns:
         df["_type_rank"] = df[COLUMN_TYPE_LIV].map({"contrat_maintenance": 0, "commande_libre": 1}).fillna(2)
         df = (
@@ -998,11 +909,61 @@ def _load_data_from_disk():
             .drop(columns=["_type_rank"])
             .reset_index(drop=True)
         )
-        print(f"[DEDUP] {len(df)} lignes après dédoublonnage")
+        print(f"[DEDUP] {len(df)} lignes")
 
     # Commentaires contextuels vectorisés
     df = _generate_contextual_comments(df)
 
+    return df
+
+
+def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
+    """Remplace les commentaires CSV par des messages précis. 100% vectorisé."""
+    if COLUMN_COMMENT not in df.columns:
+        df[COLUMN_COMMENT] = ""
+    if COLUMN_CLIENT in df.columns:
+        nb_client = df.groupby(COLUMN_CLIENT)[COLUMN_CLIENT].transform("count")
+    else:
+        nb_client = pd.Series(1, index=df.index)
+    prio  = pd.to_numeric(df.get(COLUMN_PRIORITY),  errors="coerce")
+    jours = pd.to_numeric(df.get("jours_display"),   errors="coerce")
+    pct   = pd.to_numeric(df.get(COLUMN_LAST_PCT),   errors="coerce")
+    fallback = df.get("fallback_p4", pd.Series(False, index=df.index)).fillna(False).astype(bool)
+    overdue  = (-jours).clip(lower=0).fillna(0).astype(int).astype(str)
+    days_str = jours.fillna(0).astype(int).astype(str) + "j"
+    pct_str  = pct.fillna(0).astype(int).astype(str) + "%"
+    others   = (nb_client - 1).clip(lower=0).astype(int).astype(str)
+    m_p0   = (prio == 0) | (jours < 0)
+    m_vide = pct == 0
+    m_p1   = (~m_p0) & ((prio == 1) | (jours.between(0, 3, inclusive="both")))
+    m_p2   = (~m_p0) & (~m_p1) & ((prio == 2) | (jours.between(4, 14, inclusive="both")))
+    m_p3   = (~m_p0) & (~m_p1) & (~m_p2) & ((prio == 3) | (jours.between(15, 30, inclusive="both")))
+    m_p4   = (prio == 4) | fallback
+    conditions = [
+        m_p0 & m_vide, m_p0 & ~m_vide,
+        m_p1 & (pct <= 1), m_p1 & (pct > 1) & (pct <= 5), m_p1,
+        m_p2 & (nb_client > 1), m_p2,
+        m_p3 & (nb_client > 1), m_p3,
+        m_p4 & (pct == 0), m_p4 & (pct > 0) & (pct <= 1), m_p4,
+    ]
+    choices = [
+        "Rupture confirmée depuis " + overdue + "j — toner vide",
+        "Date de rupture dépassée de " + overdue + "j",
+        "Toner quasi vide — envoyer immédiatement",
+        "Rupture dans " + days_str + " — urgent",
+        "Rupture dans " + days_str + " — prioriser",
+        "Prévoir envoi sous " + days_str + " — à regrouper avec " + others + " autre(s)",
+        "Prévoir envoi sous " + days_str,
+        "À planifier sous " + days_str + " — " + nb_client.astype(int).astype(str) + " toner(s) à regrouper",
+        "À planifier sous " + days_str,
+        "Toner vide — non remonté par le ML",
+        "Niveau critique détecté par KPAX",
+        "Toner bas (" + pct_str + ") — surveiller",
+    ]
+    new_comments = pd.Series(np.select(conditions, choices, default="Vérifier état du toner"), index=df.index)
+    existing = df[COLUMN_COMMENT].astype(str).str.strip()
+    mask_keep = existing.str.startswith("⚠️") | existing.str.startswith("⏰")
+    df[COLUMN_COMMENT] = new_comments.where(~mask_keep, existing)
     return df
 
 
@@ -1152,14 +1113,13 @@ def index():
     # Ces lignes ne s'affichent PAS dans l'accueil
     # ============================================================
     if "alerte_non_prioritaire" in filtered.columns:
-        # Convertir en bool proprement
         filtered["alerte_non_prioritaire"] = filtered["alerte_non_prioritaire"].fillna(False).infer_objects(copy=False).astype(bool)
         nb_alertes_total = filtered["alerte_non_prioritaire"].sum()
         filtered = filtered[~filtered["alerte_non_prioritaire"]].copy()
     else:
         nb_alertes_total = 0
 
-    # Toners inchangés → page dédiée, masqués de l'accueil
+    # Toners inchangés → page /toner-inchange, masqués de l'accueil
     if "toner_inchange" in filtered.columns:
         filtered["toner_inchange"] = filtered["toner_inchange"].fillna(False).astype(bool)
         nb_toner_inchange = int(filtered["toner_inchange"].sum())
@@ -1328,24 +1288,23 @@ def toner_inchange_page():
         df["toner_inchange"] = False
     df["toner_inchange"] = df["toner_inchange"].fillna(False).astype(bool)
     inchange_df = df[df["toner_inchange"]].copy()
-    sort_cols = (["toner_inchange_jours"] if "toner_inchange_jours" in inchange_df.columns else []) + \
-                ([COLUMN_PRIORITY] if COLUMN_PRIORITY in inchange_df.columns else []) + [COLUMN_CLIENT, COLUMN_SERIAL_DISPLAY]
+    sort_cols = (["toner_inchange_jours"] if "toner_inchange_jours" in inchange_df.columns else []) +                 ([COLUMN_PRIORITY] if COLUMN_PRIORITY in inchange_df.columns else []) + [COLUMN_CLIENT, COLUMN_SERIAL_DISPLAY]
     if sort_cols and not inchange_df.empty:
         inchange_df = inchange_df.sort_values(sort_cols, ascending=[False]+[True]*(len(sort_cols)-1), na_position="last")
     grouped_printers = []
     for serial_display, sub in inchange_df.groupby(COLUMN_SERIAL_DISPLAY):
         rows = sub.to_dict(orient="records")
         grouped_printers.append({
-            "serial_display":    serial_display,
-            "client":            sub[COLUMN_CLIENT].dropna().astype(str).iloc[0]   if COLUMN_CLIENT   in sub.columns and not sub[COLUMN_CLIENT].isna().all()   else None,
-            "contract":          sub[COLUMN_CONTRACT].dropna().astype(str).iloc[0] if COLUMN_CONTRACT in sub.columns and not sub[COLUMN_CONTRACT].isna().all() else None,
-            "city":              sub[COLUMN_CITY].dropna().astype(str).iloc[0]     if COLUMN_CITY     in sub.columns and not sub[COLUMN_CITY].isna().all()     else None,
-            "rows":              rows,
-            "min_days_left":     float(sub["jours_display"].min())          if "jours_display"       in sub.columns and sub["jours_display"].notna().any()       else None,
-            "min_stockout_date": str(sub[COLUMN_STOCKOUT].dropna().min())   if COLUMN_STOCKOUT       in sub.columns and sub[COLUMN_STOCKOUT].notna().any()       else None,
-            "min_priority":      int(sub[COLUMN_PRIORITY].min())            if COLUMN_PRIORITY        in sub.columns and sub[COLUMN_PRIORITY].notna().any()       else None,
-            "max_jours_inchange":int(sub["toner_inchange_jours"].dropna().max()) if "toner_inchange_jours" in sub.columns and sub["toner_inchange_jours"].notna().any() else None,
-            "colors_present":    sorted(sub["couleur_norm"].dropna().astype(str).str.lower().str.strip().replace("",pd.NA).dropna().unique().tolist()) if "couleur_norm" in sub.columns else [],
+            "serial_display":     serial_display,
+            "client":             sub[COLUMN_CLIENT].dropna().astype(str).iloc[0]    if COLUMN_CLIENT   in sub.columns and not sub[COLUMN_CLIENT].isna().all()   else None,
+            "contract":           sub[COLUMN_CONTRACT].dropna().astype(str).iloc[0]  if COLUMN_CONTRACT in sub.columns and not sub[COLUMN_CONTRACT].isna().all() else None,
+            "city":               sub[COLUMN_CITY].dropna().astype(str).iloc[0]      if COLUMN_CITY     in sub.columns and not sub[COLUMN_CITY].isna().all()     else None,
+            "rows":               rows,
+            "min_days_left":      float(sub["jours_display"].min())                  if "jours_display"        in sub.columns and sub["jours_display"].notna().any()        else None,
+            "min_stockout_date":  str(sub[COLUMN_STOCKOUT].dropna().min())           if COLUMN_STOCKOUT        in sub.columns and sub[COLUMN_STOCKOUT].notna().any()        else None,
+            "min_priority":       int(sub[COLUMN_PRIORITY].min())                    if COLUMN_PRIORITY        in sub.columns and sub[COLUMN_PRIORITY].notna().any()        else None,
+            "max_jours_inchange": int(sub["toner_inchange_jours"].dropna().max())    if "toner_inchange_jours" in sub.columns and sub["toner_inchange_jours"].notna().any() else None,
+            "colors_present":     sorted(sub["couleur_norm"].dropna().astype(str).str.lower().str.strip().replace("",pd.NA).dropna().unique().tolist()) if "couleur_norm" in sub.columns else [],
         })
     return render_template(
         "toner_inchange.html",
