@@ -955,7 +955,7 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
         "Rupture dans " + days_str + " — prioriser",
         "Prévoir envoi sous " + days_str + " — à regrouper avec " + others + " autre(s)",
         "Prévoir envoi sous " + days_str,
-        "À planifier sous " + days_str + " — " + nb_client.astype(int).astype(str) + " toner(s) à regrouper",
+        "À planifier sous " + days_str + " — " + nb_client_safe.astype(int).astype(str) + " toner(s) à regrouper",  # ✅ CORRIGÉ ICI
         "À planifier sous " + days_str,
         "Toner vide — non remonté par le ML",
         "Niveau critique détecté par KPAX",
