@@ -1,10 +1,19 @@
+import gzip
+import io
 import json
 import os
+import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, abort
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
 app = Flask(__name__)
 
@@ -112,12 +121,92 @@ KPAX_HISTORY_ENABLED = os.getenv("KPAX_HISTORY_ENABLED", "0") == "1"
 
 FORECASTS_PATH = BASE_DIR / "data" / "processed" / "consumables_forecasts.parquet"
 
-# Item ledger : livraisons réelles de toners
+# Item ledger — livraisons réelles de toners
 ITEM_LEDGER_PARQUET = BASE_DIR / "data" / "processed" / "item_ledger.parquet"
 ITEM_LEDGER_CSV     = BASE_DIR / "data" / "interim"   / "item_ledger.csv"
+LEDGER_WINDOW_DAYS  = 90  # jours de lookback livraisons
 
-# Fenêtre : livraison considérée "récente" si < N jours
-LEDGER_WINDOW_DAYS = 90
+# ============================================================
+# SUPABASE — téléchargement des données au démarrage
+# ============================================================
+SUPABASE_URL    = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY    = os.getenv("SUPABASE_KEY", "")
+SUPABASE_BUCKET = "toner-data"
+CACHE_MAX_AGE_H = 6  # réutilise le fichier local si < 6h
+
+# remote_name → chemin local
+SUPABASE_FILES = {
+    "recommandations_toners_latest.csv": BASE_DIR / "data" / "outputs"   / "recommandations_toners_latest.csv",
+    "kpax_last_states.csv":              BASE_DIR / "data" / "processed" / "kpax_last_states.csv",
+    "kpax_history_light.csv":            BASE_DIR / "data" / "processed" / "kpax_history_light.csv",
+    "contract_status.parquet":           BASE_DIR / "data" / "processed" / "contract_status.parquet",
+}
+
+
+def _supabase_client():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        from supabase import create_client
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception as e:
+        print(f"[SUPABASE] Impossible d'initialiser : {e}")
+        return None
+
+
+def _is_fresh(path: Path) -> bool:
+    if not path.exists():
+        return False
+    return (time.time() - path.stat().st_mtime) / 3600 < CACHE_MAX_AGE_H
+
+
+def _download_file(client, remote_name: str, local_path: Path) -> bool:
+    local_path.parent.mkdir(parents=True, exist_ok=True)
+    # Essaie d'abord le format chunked (gros fichiers)
+    try:
+        meta_bytes = client.storage.from_(SUPABASE_BUCKET).download(f"{remote_name}.meta.json")
+        meta = json.loads(meta_bytes.decode("utf-8"))
+        n_chunks = meta["chunks"]
+        print(f"[SUPABASE] {remote_name} → {n_chunks} chunks...")
+        parts = []
+        for i in range(n_chunks):
+            gz_data = client.storage.from_(SUPABASE_BUCKET).download(f"{remote_name}.chunk{i}.gz")
+            with gzip.GzipFile(fileobj=io.BytesIO(gz_data)) as gz:
+                parts.append(pd.read_csv(io.BytesIO(gz.read())))
+            print(f"[SUPABASE]   chunk {i+1}/{n_chunks} ✓")
+        pd.concat(parts, ignore_index=True).to_csv(local_path, index=False)
+        print(f"[SUPABASE] ✅ {remote_name} assemblé ({meta['rows']} lignes)")
+        return True
+    except Exception:
+        pass
+    # Fichier normal
+    try:
+        data = client.storage.from_(SUPABASE_BUCKET).download(remote_name)
+        with open(local_path, "wb") as f:
+            f.write(data)
+        print(f"[SUPABASE] ✅ {remote_name} ({len(data)/1e6:.1f} MB)")
+        return True
+    except Exception as e:
+        print(f"[SUPABASE] ❌ {remote_name} : {e}")
+        return False
+
+
+def download_data_from_supabase():
+    client = _supabase_client()
+    if client is None:
+        print("[SUPABASE] Pas de credentials → mode local")
+        return
+    print(f"[SUPABASE] Vérification cache (max {CACHE_MAX_AGE_H}h)...")
+    for remote_name, local_path in SUPABASE_FILES.items():
+        if _is_fresh(local_path):
+            age = (time.time() - local_path.stat().st_mtime) / 3600
+            print(f"[SUPABASE] Cache OK → {remote_name} ({age:.1f}h)")
+        else:
+            _download_file(client, remote_name, local_path)
+
+
+# Appel au démarrage — fonctionne avec Gunicorn ET python app.py
+download_data_from_supabase()
 
 
 # ============================================================
@@ -156,7 +245,7 @@ _KPAX_LAST_STATES = None
 _KPAX_HISTORY_LONG = None
 _DATA_CACHE = None          # (mtime, DataFrame)
 _CONTRACT_CACHE = None      # (mtime, DataFrame)
-_LEDGER_CACHE = None        # DataFrame : livraisons item_ledger
+_LEDGER_CACHE = None        # DataFrame livraisons item_ledger
 
 
 # ============================================================
@@ -209,19 +298,18 @@ def load_processed_ids() -> set:
 
 
 def _stable_key(serial: str, couleur: str) -> str:
-    """Clé stable = 'serial|couleur' en minuscules."""
     return f"{str(serial).strip().lower()}|{str(couleur).strip().lower()}"
 
 
 # ============================================================
-# ITEM LEDGER — livraisons réelles de toners
+# ITEM LEDGER — livraisons réelles (toner_inchange)
 # ============================================================
 
 _COULEUR_MAP = {
-    "toner noir":    "black", "toner black":   "black", "noir": "black", "black": "black",
-    "toner cyan":    "cyan",  "cyan":          "cyan",
-    "toner magenta": "magenta", "magenta":     "magenta",
-    "toner jaune":   "yellow", "toner yellow": "yellow", "jaune": "yellow", "yellow": "yellow",
+    "toner noir": "black", "toner black": "black", "noir": "black", "black": "black",
+    "toner cyan": "cyan",  "cyan": "cyan",
+    "toner magenta": "magenta", "magenta": "magenta",
+    "toner jaune": "yellow", "toner yellow": "yellow", "jaune": "yellow", "yellow": "yellow",
 }
 
 def _norm_couleur_ledger(val: str):
@@ -235,11 +323,6 @@ def _norm_couleur_ledger(val: str):
 
 
 def load_item_ledger() -> pd.DataFrame:
-    """
-    Charge item_ledger (parquet prioritaire, CSV en fallback).
-    Retourne : serial_display | couleur_norm | date_livraison
-    Fenêtre : LEDGER_WINDOW_DAYS derniers jours.
-    """
     global _LEDGER_CACHE
     if _LEDGER_CACHE is not None:
         return _LEDGER_CACHE
@@ -248,109 +331,140 @@ def load_item_ledger() -> pd.DataFrame:
     if ITEM_LEDGER_PARQUET.exists():
         try:
             df = pd.read_parquet(ITEM_LEDGER_PARQUET)
-            print(f"[LEDGER] Chargé depuis parquet : {len(df)} lignes")
+            print(f"[LEDGER] Parquet : {len(df)} lignes")
         except Exception as e:
             print(f"[LEDGER] Erreur parquet : {e}")
 
     if df is None and ITEM_LEDGER_CSV.exists():
         try:
-            df = pd.read_csv(ITEM_LEDGER_CSV, sep=",", low_memory=False)
-            print(f"[LEDGER] Chargé depuis CSV interim : {len(df)} lignes")
+            df = pd.read_csv(ITEM_LEDGER_CSV, low_memory=False)
+            print(f"[LEDGER] CSV : {len(df)} lignes")
         except Exception as e:
             print(f"[LEDGER] Erreur CSV : {e}")
 
+    empty = pd.DataFrame(columns=["serial_display", "couleur_norm", "date_livraison"])
     if df is None or df.empty:
-        print("[LEDGER] Aucun fichier item_ledger trouvé → toner_inchange désactivé")
-        _LEDGER_CACHE = pd.DataFrame(columns=["serial_display", "couleur_norm", "date_livraison"])
+        print("[LEDGER] Aucun fichier trouvé → toner_inchange désactivé")
+        _LEDGER_CACHE = empty
         return _LEDGER_CACHE
 
-    # Nettoyage des noms de colonnes (enlève les $)
     df.columns = [c.strip().strip("$") for c in df.columns]
     cols = list(df.columns)
-
-    # Détection colonnes
-    serial_col = next((c for c in ["No. serie", "No serie", "serial", "serial_display"] if c in cols), None)
-    if serial_col is None:
-        serial_col = next((c for c in cols if "serie" in c.lower() or "serial" in c.lower()), None)
-
-    date_col = next((c for c in ["Date compta", "date_compta", "date", "Date"] if c in cols), None)
-
-    type_col = next((c for c in ["Type conso", "type_conso", "Type conso general", "Designation"] if c in cols), None)
+    serial_col = next((c for c in ["No. serie","No serie","serial","serial_display"] if c in cols), None) \
+                 or next((c for c in cols if "serie" in c.lower() or "serial" in c.lower()), None)
+    date_col   = next((c for c in ["Date compta","date_compta","date","Date"] if c in cols), None)
+    type_col   = next((c for c in ["Type conso","type_conso","Type conso general","Designation"] if c in cols), None)
 
     if not serial_col or not date_col or not type_col:
-        print(f"[LEDGER] Colonnes non détectées. Disponibles: {cols}")
-        _LEDGER_CACHE = pd.DataFrame(columns=["serial_display", "couleur_norm", "date_livraison"])
+        print(f"[LEDGER] Colonnes non détectées. Dispo: {cols}")
+        _LEDGER_CACHE = empty
         return _LEDGER_CACHE
 
     out = df[[serial_col, date_col, type_col]].copy()
-    out["serial_display"] = out[serial_col].astype(str).str.strip().str.strip("$")
-    out["date_livraison"] = pd.to_datetime(
-        out[date_col].astype(str).str.strip().str.strip("$"),
-        dayfirst=True, errors="coerce"
-    )
-    out["couleur_norm"] = out[type_col].astype(str).apply(_norm_couleur_ledger)
-
-    out = out.dropna(subset=["serial_display", "date_livraison", "couleur_norm"])
+    out["serial_display"]  = out[serial_col].astype(str).str.strip().str.strip("$")
+    out["date_livraison"]  = pd.to_datetime(out[date_col].astype(str).str.strip().str.strip("$"), dayfirst=True, errors="coerce")
+    out["couleur_norm"]    = out[type_col].astype(str).apply(_norm_couleur_ledger)
+    out = out.dropna(subset=["serial_display","date_livraison","couleur_norm"])
     cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=LEDGER_WINDOW_DAYS)
-    out = out[out["date_livraison"] >= cutoff]
-
-    result = out[["serial_display", "couleur_norm", "date_livraison"]].reset_index(drop=True)
-    print(f"[LEDGER] {len(result)} livraisons dans les {LEDGER_WINDOW_DAYS} derniers jours")
-    _LEDGER_CACHE = result
+    out = out[out["date_livraison"] >= cutoff][["serial_display","couleur_norm","date_livraison"]].reset_index(drop=True)
+    print(f"[LEDGER] {len(out)} livraisons dans les {LEDGER_WINDOW_DAYS}j")
+    _LEDGER_CACHE = out
     return _LEDGER_CACHE
 
 
 def enrich_with_toner_inchange(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Détecte les toners livrés (item_ledger) mais toujours bas (KPAX < 10%).
-    → toner_inchange = True
-    → toner_inchange_jours = nb jours depuis la dernière livraison
-    """
+    """Détecte toners livrés (item_ledger) mais toujours bas (KPAX < 10%)."""
     ledger = load_item_ledger()
-
     df["toner_inchange"]       = False
     df["toner_inchange_jours"] = None
-
     if ledger.empty:
         return df
 
     today = pd.Timestamp.today().normalize()
-
-    # Index (serial, couleur) → date_livraison la plus récente
-    ledger_idx = (
-        ledger
-        .sort_values("date_livraison", ascending=False)
-        .groupby(["serial_display", "couleur_norm"])["date_livraison"]
-        .first()
-        .to_dict()
+    idx_map = (
+        ledger.sort_values("date_livraison", ascending=False)
+        .groupby(["serial_display","couleur_norm"])["date_livraison"]
+        .first().to_dict()
     )
 
     for idx, row in df.iterrows():
         serial  = str(row.get(COLUMN_SERIAL_DISPLAY, "")).strip()
         couleur = str(row.get("couleur_norm") or row.get("couleur") or row.get(COLUMN_TONER, "")).strip().lower()
-
-        last_livraison = ledger_idx.get((serial, couleur))
-        if last_livraison is None:
+        last_liv = idx_map.get((serial, couleur))
+        if last_liv is None:
             continue
-
-        pct = row.get(COLUMN_LAST_PCT)
         try:
-            pct_val = float(pct)
-            if pd.isna(pct_val):
-                pct_val = None
+            pct_val = float(row.get(COLUMN_LAST_PCT))
+            if pd.isna(pct_val): pct_val = None
         except Exception:
             pct_val = None
-
         if pct_val is not None and pct_val >= 10:
-            continue  # toner rechargé, tout va bien
-
-        jours = int((today - last_livraison).days)
-        print(f"[TONER_INCHANGE] ✅ {serial}|{couleur} → livré il y a {jours}j, pct={pct_val}")
+            continue
+        jours = int((today - last_liv).days)
+        print(f"[TONER_INCHANGE] ✅ {serial}|{couleur} → {jours}j, pct={pct_val}")
         df.at[idx, "toner_inchange"]       = True
         df.at[idx, "toner_inchange_jours"] = jours
 
-    n = int(df["toner_inchange"].sum())
-    print(f"[TONER_INCHANGE] {n} toner(s) livrés mais non remplacés détectés")
+    print(f"[TONER_INCHANGE] {int(df['toner_inchange'].sum())} toner(s) non remplacés")
+    return df
+
+
+# ============================================================
+# COMMENTAIRES CONTEXTUELS
+# ============================================================
+
+def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
+    """Remplace les commentaires CSV par des messages précis et contextuels."""
+    if COLUMN_COMMENT not in df.columns:
+        df[COLUMN_COMMENT] = ""
+
+    client_counts = {}
+    if COLUMN_CLIENT in df.columns:
+        for client, grp in df.groupby(COLUMN_CLIENT):
+            client_counts[str(client)] = len(grp)
+
+    for idx, row in df.iterrows():
+        existing = str(row.get(COLUMN_COMMENT, "")).strip()
+        if existing.startswith("⚠️") or existing.startswith("⏰"):
+            continue  # garde les commentaires contrat
+
+        try: prio_int  = int(row.get(COLUMN_PRIORITY)) if pd.notna(row.get(COLUMN_PRIORITY)) else None
+        except Exception: prio_int = None
+        try: jours_val = float(row.get("jours_display")) if pd.notna(row.get("jours_display")) else None
+        except Exception: jours_val = None
+        try: pct_val   = float(row.get(COLUMN_LAST_PCT)) if pd.notna(row.get(COLUMN_LAST_PCT)) else None
+        except Exception: pct_val = None
+
+        client    = str(row.get(COLUMN_CLIENT, "")).strip()
+        nb_client = client_counts.get(client, 1)
+        fallback  = bool(row.get("fallback_p4", False))
+        days_str  = f"{int(jours_val)}j" if jours_val is not None else "bientôt"
+
+        if prio_int == 0 or (jours_val is not None and jours_val < 0):
+            overdue = abs(int(jours_val)) if jours_val is not None else "?"
+            comment = f"Rupture confirmée depuis {overdue}j — toner vide" if pct_val == 0 \
+                      else f"Date de rupture dépassée de {overdue}j"
+        elif prio_int == 1 or (jours_val is not None and 0 <= jours_val <= 3):
+            if pct_val is not None and pct_val <= 1:
+                comment = "Toner quasi vide — envoyer immédiatement"
+            elif pct_val is not None and pct_val <= 5:
+                comment = f"Rupture dans {days_str} — urgent"
+            else:
+                comment = f"Rupture dans {days_str} — prioriser"
+        elif prio_int == 2 or (jours_val is not None and 4 <= jours_val <= 14):
+            comment = (f"Prévoir envoi sous {days_str} — à regrouper avec {nb_client-1} autre(s)"
+                       if nb_client > 1 else f"Prévoir envoi sous {days_str}")
+        elif prio_int == 3 or (jours_val is not None and 15 <= jours_val <= 30):
+            comment = (f"À planifier sous {days_str} — {nb_client} toner(s) à regrouper"
+                       if nb_client > 1 else f"À planifier sous {days_str}")
+        elif prio_int == 4 or fallback:
+            if pct_val == 0:   comment = "Toner vide — non remonté par le ML"
+            elif pct_val and pct_val <= 1: comment = "Niveau critique détecté par KPAX"
+            else: comment = f"Toner bas ({int(pct_val)}%) — surveiller" if pct_val else "Toner bas — surveiller"
+        else:
+            comment = f"À surveiller ({int(jours_val)}j restants)" if jours_val and jours_val > 30 else "Vérifier état du toner"
+
+        df.at[idx, COLUMN_COMMENT] = comment
     return df
 
 
@@ -818,7 +932,7 @@ def _load_data_from_disk():
                         COLUMN_CONTRACT: contract_no,
                         COLUMN_CITY: city,
                         COLUMN_TYPE_LIV: type_liv if type_liv else pd.NA,
-                        COLUMN_COMMENT: "",  # sera généré par _generate_contextual_comments
+                        COLUMN_COMMENT: "",  # généré par _generate_contextual_comments
                         COLUMN_LAST_UPDATE: last_update_val,
                         COLUMN_LAST_PCT: float(row["last_pct"]) if pd.notna(row["last_pct"]) else pd.NA,
                         "days_since_last": days_since,
@@ -871,139 +985,34 @@ def _load_data_from_disk():
     df.loc[mask_negatif, "jours_display"] = -overdue_days[mask_negatif]
 
     # ============================================================
-    # P0 : rupture dépassée (jours_display < 0) → priorité 0
+    # P0 : rupture dépassée → priorité 0
     # ============================================================
     if COLUMN_PRIORITY in df.columns:
         mask_p0 = df["jours_display"].notna() & (df["jours_display"] < 0)
         df.loc[mask_p0, COLUMN_PRIORITY] = 0
         nb_p0 = int(mask_p0.sum())
         if nb_p0:
-            print(f"[P0] {nb_p0} toner(s) passés en P0 (rupture dépassée)")
+            print(f"[P0] {nb_p0} toner(s) en P0 (rupture dépassée)")
 
     # ============================================================
     # DÉDOUBLONNAGE : 1 ligne par (serial, couleur)
-    # Ordre de préférence : contrat_maintenance > commande_libre > autres
+    # Priorité : contrat_maintenance > commande_libre > autres
     # ============================================================
     if COLUMN_TYPE_LIV in df.columns and "couleur_norm" in df.columns:
         type_order = {"contrat_maintenance": 0, "commande_libre": 1}
         df["_type_rank"] = df[COLUMN_TYPE_LIV].map(type_order).fillna(2)
         df = (
-            df
-            .sort_values(["_type_rank", COLUMN_PRIORITY], ascending=[True, True])
+            df.sort_values(["_type_rank", COLUMN_PRIORITY], ascending=[True, True])
             .drop_duplicates(subset=[COLUMN_SERIAL_DISPLAY, "couleur_norm"], keep="first")
             .drop(columns=["_type_rank"])
             .reset_index(drop=True)
         )
-        print(f"[DEDUP] {len(df)} lignes après dédoublonnage (serial, couleur)")
+        print(f"[DEDUP] {len(df)} lignes après dédoublonnage")
 
     # ============================================================
     # COMMENTAIRES CONTEXTUELS
-    # Rewrite les commentaires CSV avec un message précis et utile
     # ============================================================
-    df = _generate_contextual_comments(df, today)
-
-    return df
-
-
-def _generate_contextual_comments(df: pd.DataFrame, today: pd.Timestamp) -> pd.DataFrame:
-    """
-    Génère des commentaires contextuels en fonction de :
-    - la priorité / jours restants
-    - le % KPAX actuel
-    - s'il y a d'autres toners bas chez le même client (regroupement réel)
-    """
-    if COLUMN_COMMENT not in df.columns:
-        df[COLUMN_COMMENT] = ""
-
-    # Pré-calcul : nombre de toners à envoyer par client (hors P0/P4 seuls)
-    # → pour décider si "regroupement possible" est pertinent
-    client_toner_counts: dict = {}
-    if COLUMN_CLIENT in df.columns:
-        for client, grp in df.groupby(COLUMN_CLIENT):
-            client_toner_counts[str(client)] = len(grp)
-
-    for idx, row in df.iterrows():
-        prio    = row.get(COLUMN_PRIORITY)
-        jours   = row.get("jours_display")
-        pct     = row.get(COLUMN_LAST_PCT)
-        client  = str(row.get(COLUMN_CLIENT, "")).strip()
-        fallback = bool(row.get("fallback_p4", False))
-
-        try:
-            prio_int  = int(prio)  if prio  is not None and not pd.isna(prio)  else None
-        except Exception:
-            prio_int = None
-        try:
-            jours_val = float(jours) if jours is not None and not pd.isna(jours) else None
-        except Exception:
-            jours_val = None
-        try:
-            pct_val   = float(pct)   if pct   is not None and not pd.isna(pct)   else None
-        except Exception:
-            pct_val = None
-
-        # Nombre total de toners en attente pour ce client
-        nb_client = client_toner_counts.get(client, 1)
-
-        # --- Construire le commentaire ---
-        comment = ""
-
-        # P0 : rupture dépassée
-        if prio_int == 0 or (jours_val is not None and jours_val < 0):
-            overdue = abs(int(jours_val)) if jours_val is not None else "?"
-            if pct_val is not None and pct_val == 0:
-                comment = f"Rupture confirmée depuis {overdue}j — toner vide"
-            else:
-                comment = f"Date de rupture dépassée de {overdue}j"
-
-        # P1 : ≤ 3 jours
-        elif prio_int == 1 or (jours_val is not None and 0 <= jours_val <= 3):
-            if pct_val is not None and pct_val <= 1:
-                comment = "Toner quasi vide — envoyer immédiatement"
-            elif pct_val is not None and pct_val <= 5:
-                comment = f"Rupture dans {int(jours_val)}j — urgent"
-            else:
-                comment = f"Rupture dans {int(jours_val)}j — prioriser"
-
-        # P2 : 4–14 jours
-        elif prio_int == 2 or (jours_val is not None and 4 <= jours_val <= 14):
-            days_str = f"{int(jours_val)}j" if jours_val is not None else "bientôt"
-            if nb_client > 1:
-                comment = f"Prévoir envoi sous {days_str} — à regrouper avec {nb_client - 1} autre(s) toner(s)"
-            else:
-                comment = f"Prévoir envoi sous {days_str}"
-
-        # P3 : 15–30 jours
-        elif prio_int == 3 or (jours_val is not None and 15 <= jours_val <= 30):
-            days_str = f"{int(jours_val)}j" if jours_val is not None else "ce mois"
-            if nb_client > 1:
-                comment = f"À planifier sous {days_str} — {nb_client} toner(s) à regrouper"
-            else:
-                comment = f"À planifier sous {days_str}"
-
-        # P4 / fallback KPAX
-        elif prio_int == 4 or fallback:
-            if pct_val is not None and pct_val == 0:
-                comment = "Toner vide — non remonté par le ML"
-            elif pct_val is not None and pct_val <= 1:
-                comment = "Niveau critique détecté par KPAX"
-            else:
-                pct_str = f"{int(pct_val)}%" if pct_val is not None else "bas"
-                comment = f"Toner bas ({pct_str}) — surveiller"
-
-        # Fallback générique (ne devrait pas arriver)
-        else:
-            if jours_val is not None and jours_val > 30:
-                comment = f"À surveiller ({int(jours_val)}j restants)"
-            else:
-                comment = "Vérifier état du toner"
-
-        # Ne pas écraser les commentaires de contrat (alertes spécifiques)
-        existing = str(row.get(COLUMN_COMMENT, "")).strip()
-        if existing.startswith("⚠️") or existing.startswith("⏰"):
-            continue
-
-        df.at[idx, COLUMN_COMMENT] = comment
+    df = _generate_contextual_comments(df)
 
     return df
 
@@ -1161,10 +1170,7 @@ def index():
     else:
         nb_alertes_total = 0
 
-    # ============================================================
-    # FILTRER LES TONERS INCHANGÉS — page dédiée /toner-inchange
-    # Ces lignes ne s'affichent PAS dans l'accueil
-    # ============================================================
+    # Toners inchangés → page /toner-inchange, masqués de l'accueil
     if "toner_inchange" in filtered.columns:
         filtered["toner_inchange"] = filtered["toner_inchange"].fillna(False).astype(bool)
         nb_toner_inchange = int(filtered["toner_inchange"].sum())
@@ -1326,7 +1332,7 @@ def index():
 
 @app.route("/toner-inchange", methods=["GET"])
 def toner_inchange_page():
-    """Page dédiée aux toners livrés mais non remplacés (toner_inchange=True)."""
+    """Page dédiée aux toners livrés mais non remplacés."""
     df = get_data()
     df = enrich_with_toner_inchange(df)
     processed_ids = load_processed_ids()
@@ -1334,75 +1340,42 @@ def toner_inchange_page():
     if "toner_inchange" not in df.columns:
         df["toner_inchange"] = False
     df["toner_inchange"] = df["toner_inchange"].fillna(False).astype(bool)
-
     inchange_df = df[df["toner_inchange"]].copy()
 
-    # Trier : jours depuis livraison décroissant (les plus urgents en premier)
-    sort_cols = []
-    if "toner_inchange_jours" in inchange_df.columns:
-        sort_cols.append("toner_inchange_jours")
-    if COLUMN_PRIORITY in inchange_df.columns:
-        sort_cols.append(COLUMN_PRIORITY)
-    sort_cols += [COLUMN_CLIENT, COLUMN_SERIAL_DISPLAY]
-    if sort_cols:
-        inchange_df = inchange_df.sort_values(sort_cols, ascending=[False] + [True] * (len(sort_cols) - 1), na_position="last")
+    sort_cols = (["toner_inchange_jours"] if "toner_inchange_jours" in inchange_df.columns else []) + \
+                ([COLUMN_PRIORITY] if COLUMN_PRIORITY in inchange_df.columns else []) + \
+                [COLUMN_CLIENT, COLUMN_SERIAL_DISPLAY]
+    if sort_cols and not inchange_df.empty:
+        inchange_df = inchange_df.sort_values(
+            sort_cols, ascending=[False] + [True]*(len(sort_cols)-1), na_position="last"
+        )
 
     grouped_printers = []
-    if not inchange_df.empty:
-        for serial_display, sub in inchange_df.groupby(COLUMN_SERIAL_DISPLAY):
-            rows = sub.to_dict(orient="records")
-
-            min_days_left = float(sub["jours_display"].min()) if "jours_display" in sub.columns and sub["jours_display"].notna().any() else None
-            if COLUMN_STOCKOUT in sub.columns and sub[COLUMN_STOCKOUT].notna().any():
-                min_stockout_date = str(sub[COLUMN_STOCKOUT].dropna().min())
-            else:
-                min_stockout_date = None
-            min_priority = int(sub[COLUMN_PRIORITY].min()) if COLUMN_PRIORITY in sub.columns and sub[COLUMN_PRIORITY].notna().any() else None
-            client_name = sub[COLUMN_CLIENT].dropna().astype(str).iloc[0] if COLUMN_CLIENT in sub.columns and not sub[COLUMN_CLIENT].isna().all() else None
-            contract_no = sub[COLUMN_CONTRACT].dropna().astype(str).iloc[0] if COLUMN_CONTRACT in sub.columns and not sub[COLUMN_CONTRACT].isna().all() else None
-            city = sub[COLUMN_CITY].dropna().astype(str).iloc[0] if COLUMN_CITY in sub.columns and not sub[COLUMN_CITY].isna().all() else None
-
-            # Nb jours depuis livraison (max pour l'imprimante)
-            max_jours_inchange = None
-            if "toner_inchange_jours" in sub.columns and sub["toner_inchange_jours"].notna().any():
-                max_jours_inchange = int(sub["toner_inchange_jours"].dropna().max())
-
-            colors_present = []
-            if "couleur_norm" in sub.columns:
-                colors_present = sorted(
-                    sub["couleur_norm"].dropna().astype(str).str.lower().str.strip()
-                    .replace("", pd.NA).dropna().unique().tolist()
-                )
-
-            grouped_printers.append({
-                "serial_display": serial_display,
-                "client": client_name,
-                "contract": contract_no,
-                "city": city,
-                "rows": rows,
-                "min_days_left": min_days_left,
-                "min_stockout_date": min_stockout_date,
-                "min_priority": min_priority,
-                "colors_present": colors_present,
-                "max_jours_inchange": max_jours_inchange,
-            })
+    for serial_display, sub in inchange_df.groupby(COLUMN_SERIAL_DISPLAY):
+        rows          = sub.to_dict(orient="records")
+        min_days_left = float(sub["jours_display"].min()) if "jours_display" in sub.columns and sub["jours_display"].notna().any() else None
+        min_stockout  = str(sub[COLUMN_STOCKOUT].dropna().min()) if COLUMN_STOCKOUT in sub.columns and sub[COLUMN_STOCKOUT].notna().any() else None
+        min_prio      = int(sub[COLUMN_PRIORITY].min())          if COLUMN_PRIORITY in sub.columns and sub[COLUMN_PRIORITY].notna().any() else None
+        client_name   = sub[COLUMN_CLIENT].dropna().astype(str).iloc[0]  if COLUMN_CLIENT  in sub.columns and not sub[COLUMN_CLIENT].isna().all()  else None
+        contract_no   = sub[COLUMN_CONTRACT].dropna().astype(str).iloc[0] if COLUMN_CONTRACT in sub.columns and not sub[COLUMN_CONTRACT].isna().all() else None
+        city          = sub[COLUMN_CITY].dropna().astype(str).iloc[0]    if COLUMN_CITY    in sub.columns and not sub[COLUMN_CITY].isna().all()    else None
+        max_jours_inc = int(sub["toner_inchange_jours"].dropna().max())  if "toner_inchange_jours" in sub.columns and sub["toner_inchange_jours"].notna().any() else None
+        colors        = sorted(sub["couleur_norm"].dropna().astype(str).str.lower().str.strip().replace("", pd.NA).dropna().unique().tolist()) if "couleur_norm" in sub.columns else []
+        grouped_printers.append({
+            "serial_display": serial_display, "client": client_name, "contract": contract_no,
+            "city": city, "rows": rows, "min_days_left": min_days_left,
+            "min_stockout_date": min_stockout, "min_priority": min_prio,
+            "colors_present": colors, "max_jours_inchange": max_jours_inc,
+        })
 
     return render_template(
         "toner_inchange.html",
         grouped_printers=grouped_printers,
-        col_id=COLUMN_ID,
-        col_toner=COLUMN_TONER,
-        col_days="jours_display",
-        col_priority=COLUMN_PRIORITY,
-        col_client=COLUMN_CLIENT,
-        col_contract=COLUMN_CONTRACT,
-        col_city=COLUMN_CITY,
-        col_comment=COLUMN_COMMENT,
-        col_stockout=COLUMN_STOCKOUT,
-        col_type_liv=COLUMN_TYPE_LIV,
-        col_last_update=COLUMN_LAST_UPDATE,
-        col_last_pct=COLUMN_LAST_PCT,
-        processed_ids=processed_ids,
+        col_id=COLUMN_ID, col_toner=COLUMN_TONER, col_days="jours_display",
+        col_priority=COLUMN_PRIORITY, col_client=COLUMN_CLIENT, col_contract=COLUMN_CONTRACT,
+        col_city=COLUMN_CITY, col_comment=COLUMN_COMMENT, col_stockout=COLUMN_STOCKOUT,
+        col_type_liv=COLUMN_TYPE_LIV, col_last_update=COLUMN_LAST_UPDATE,
+        col_last_pct=COLUMN_LAST_PCT, processed_ids=processed_ids,
         total_inchange=len(inchange_df),
     )
 
