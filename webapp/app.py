@@ -932,7 +932,8 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
     overdue  = (-jours).clip(lower=0).fillna(0).astype(int).astype(str)
     days_str = jours.fillna(0).astype(int).astype(str) + "j"
     pct_str  = pct.fillna(0).astype(int).astype(str) + "%"
-    others   = (nb_client - 1).clip(lower=0).astype(int).astype(str)
+    nb_client_safe = nb_client.fillna(1)
+    others = (nb_client_safe - 1).clip(lower=0).astype(int).astype(str)
     m_p0   = (prio == 0) | (jours < 0)
     m_vide = pct == 0
     m_p1   = (~m_p0) & ((prio == 1) | (jours.between(0, 3, inclusive="both")))
