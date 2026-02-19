@@ -340,46 +340,39 @@
     .badge-prio-2 { background: var(--prio2); }
     .badge-prio-3 { background: var(--prio3); color:#1a1a1a; }
     .badge-prio-4 { background: var(--prio4); }
+    /* P0 : rupture dépassée — violet vif */
     .badge-prio-0 {
       background: #7c3aed;
-      animation: pulse-p0 1.4s ease-in-out infinite;
+      box-shadow: 0 0 0 2px rgba(124,58,237,0.35);
+      animation: pulse-p0 1.8s ease-in-out infinite;
     }
     @keyframes pulse-p0 {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(124,58,237,0.7); }
-      50%       { box-shadow: 0 0 0 6px rgba(124,58,237,0); }
+      0%,100% { box-shadow: 0 0 0 2px rgba(124,58,237,0.35); }
+      50%      { box-shadow: 0 0 0 5px rgba(124,58,237,0.0); }
     }
-    .days-negative { color: #ef4444; font-weight: 700; }
-    .badge-unchanged {
-      display: inline-block;
-      background: rgba(124,58,237,0.15);
-      border: 1px solid #7c3aed;
-      color: #a78bfa;
-      border-radius: 6px;
-      padding: 2px 8px;
-      font-size: 0.72rem;
+
+    /* Toner inchangé CTA */
+    .btn-toner-inchange {
+      background: var(--orange);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 0.35rem 0.85rem;
+      font-size: 0.82rem;
       font-weight: 600;
-    }
-    .btn-unchanged {
+      cursor: pointer;
+      text-decoration: none;
       display: inline-flex;
       align-items: center;
       gap: 0.4rem;
-      background: rgba(124,58,237,0.15);
-      border: 1px solid #7c3aed;
-      color: #a78bfa;
-      border-radius: 8px;
-      padding: 0.3rem 0.8rem;
-      font-size: 0.8rem;
-      font-weight: 600;
-      text-decoration: none;
-      cursor: pointer;
+      transition: background 0.15s;
     }
-    .btn-unchanged:hover { background: rgba(124,58,237,0.3); text-decoration: none; }
-    .badge-count-purple {
-      background: #7c3aed;
-      color: #fff;
-      border-radius: 99px;
-      padding: 1px 7px;
-      font-size: 0.72rem;
+    .btn-toner-inchange:hover { background: #d97706; color:#fff; text-decoration:none; }
+    .btn-toner-inchange .badge-count {
+      background: rgba(255,255,255,0.25);
+      border-radius: 999px;
+      padding: 0.05rem 0.45rem;
+      font-size: 0.75rem;
     }
 
     /* Type-livraison badge */
@@ -685,6 +678,11 @@
       ⚠️ Alertes
       <span class="badge-count">{{ nb_alertes_non_prioritaires }}</span>
     </a>
+    <!-- Toner inchangé button -->
+    <a href="/toner-inchange" class="btn-toner-inchange">
+      🔔 Toner inchangé
+      <span class="badge-count">{{ nb_toner_inchange }}</span>
+    </a>
     <div class="stat-chip"><span class="label">Total</span><span class="val">{{ total_rows }}</span></div>
     <div class="stat-chip"><span class="label">À traiter</span><span class="val">{{ pending_rows }}</span></div>
     <div class="stat-chip"><span class="label">Envoyés</span><span class="val">{{ sent_rows }}</span></div>
@@ -749,30 +747,7 @@
       <input type="hidden" name="pending" value="1">
     {% endif %}
 
-    <!-- Filtres rapides -->
-    <div class="row g-2 mt-2">
-      <div class="col-auto">
-        <label class="form-label">En retard</label>
-        <div class="kpax-group">
-          <input type="radio" name="filtre_negatif" id="fn_all" value="" {% if not filtre_negatif %}checked{% endif %}>
-          <label for="fn_all">Tous</label>
-          <input type="radio" name="filtre_negatif" id="fn_p0" value="1" {% if filtre_negatif == "1" %}checked{% endif %}>
-          <label for="fn_p0">🔴 P0 uniquement</label>
-        </div>
-      </div>
-      <div class="col-auto">
-        <label class="form-label">Toner inchangé</label>
-        <div class="kpax-group">
-          <input type="radio" name="filtre_inchange" id="fi_all" value="" {% if not filtre_inchange %}checked{% endif %}>
-          <label for="fi_all">Tous</label>
-          <input type="radio" name="filtre_inchange" id="fi_inc" value="1" {% if filtre_inchange == "1" %}checked{% endif %}>
-          <label for="fi_inc">🔔 Inchangés</label>
-        </div>
-      </div>
-    </div>
-
     <div class="filter-actions">
-      <input type="hidden" name="page" value="1">
       <button type="submit" class="btn-filter">Filtrer</button>
       <a href="/" class="btn-reset">Réinitialiser</a>
     </div>
@@ -808,7 +783,7 @@
             {% if printer.client %}  <span><strong>Client</strong> {{ printer.client }}</span>{% endif %}
             {% if printer.city %}    <span><strong>Ville</strong> {{ printer.city }}</span>{% endif %}
             {% if printer.contract %}<span><strong>Contrat</strong> {{ printer.contract }}</span>{% endif %}
-            {% if printer.min_stockout_date %}<span><strong>Rupture la plus proche</strong> {{ printer.min_stockout_date }}</span>{% endif %}
+            {% if printer.min_stockout_date %}<span><strong>Rupture la plus proche</strong> {{ printer.min_stockout_date | fmt_date }}</span>{% endif %}
             {% if printer.min_days_left is not none %}<span><strong>Jours min</strong> {{ printer.min_days_left|round(0)|int }}</span>{% endif %}
           </div>
 
@@ -835,11 +810,7 @@
         <!-- Priority badge top-right -->
         <div>
           {% if printer.min_priority is not none %}
-            {% if printer.min_priority == 0 %}
-              <span class="badge-prio badge-prio-0">P0</span>
-            {% else %}
-              <span class="badge-prio badge-prio-{{ printer.min_priority }}">P{{ printer.min_priority }}</span>
-            {% endif %}
+            <span class="badge-prio badge-prio-{{ printer.min_priority }}">P{{ printer.min_priority }}</span>
           {% endif %}
         </div>
       </div>
@@ -874,25 +845,25 @@
                 <td style="color:var(--text-muted)">{{ rid }}</td>
                 <td><strong>{{ r.get(col_toner, '') }}</strong></td>
                 <td>
-                  {% set d = r.get('jours_reel', r.get(col_days)) %}
-                  {% if d is not none and d != '' and d != '—' %}
-                    {% if d|float < 0 %}
-                      <span class="days-negative">{{ d|int }}j ⚠️</span>
+                  {% set d = r.get(col_days) %}
+                  {% if d is not none and d == d %}
+                    {% set di = d | float | int %}
+                    {% if di < 0 %}
+                      <span style="color:var(--red);font-weight:700;font-family:'DM Mono',monospace;">{{ di }}j ⏰</span>
+                    {% elif di <= 0 %}
+                      <span style="color:var(--red);font-weight:700;font-family:'DM Mono',monospace;">0j ⚠️</span>
+                    {% elif di <= 7 %}
+                      <span style="color:var(--orange);font-weight:700;font-family:'DM Mono',monospace;">{{ di }}j</span>
                     {% else %}
-                      {{ d|int }}
+                      <span style="color:var(--text-muted);font-family:'DM Mono',monospace;">{{ di }}j</span>
                     {% endif %}
                   {% else %}—{% endif %}
                 </td>
-                <td>{{ r.get(col_stockout, '—') }}</td>
+                <td>{{ r.get(col_stockout, '—') | fmt_date }}</td>
 
                 <td>
                   {% if prio is not none %}
-                    {% set prio_int = prio|int %}
-                    {% if prio_int == 0 %}
-                      <span class="badge-prio badge-prio-0">P0</span>
-                    {% else %}
-                      <span class="badge-prio badge-prio-{{ prio_int }}">P{{ prio_int }}</span>
-                    {% endif %}
+                    <span class="badge-prio badge-prio-{{ prio|int }}">P{{ prio|int }}</span>
                   {% endif %}
                 </td>
 
@@ -927,12 +898,16 @@
                   {% endif %}
                 </td>
 
-                <td style="color:var(--text-muted); max-width:160px;">
-                  {% set comment = r.get(col_comment, '')|string %}
-                  {% if 'Cartouche non changée' in comment or 'inchangé' in comment|lower or 'Envoyé il y a' in comment %}
-                    <span class="badge-unchanged">🔔 Toner inchangé</span><br>
+                <td style="max-width:180px;">
+                  {% if r.get('toner_inchange') %}
+                    <div style="display:inline-flex;align-items:center;gap:0.3rem;background:rgba(245,158,11,0.15);border:1px solid rgba(245,158,11,0.4);border-radius:6px;padding:0.15rem 0.5rem;font-size:0.73rem;font-weight:600;color:var(--orange);margin-bottom:0.25rem;">
+                      🔔 Toner inchangé
+                    </div>
+                    {% if r.get('toner_inchange_jours') is not none %}
+                      <div style="font-size:0.72rem;color:var(--text-muted);">Cartouche non changée (envoyée il y a {{ r.get('toner_inchange_jours') }}j)</div>
+                    {% endif %}
                   {% endif %}
-                  {{ comment }}
+                  <div style="color:var(--text-muted);font-size:0.78rem;">{{ r.get(col_comment, '') }}</div>
                 </td>
 
                 <!-- Consumption modal trigger -->
@@ -948,14 +923,19 @@
 
                 <!-- Action -->
                 <td>
+                  {% set couleur_val_form = r.get('couleur_norm') or r.get('couleur') or r.get(col_toner, '') %}
                   {% if rid not in processed_ids %}
                     <form method="post" action="{{ url_for('mark_processed', row_id=rid) }}" style="margin:0">
+                      <input type="hidden" name="serial"  value="{{ printer.serial_display }}">
+                      <input type="hidden" name="couleur" value="{{ couleur_val_form }}">
                       <button type="submit" class="btn-mark">✓ Envoyé</button>
                     </form>
                   {% else %}
                     <div style="display:flex;align-items:center;gap:0.4rem;">
                       <span class="badge-sent">✅ Envoyé</span>
                       <form method="post" action="{{ url_for('mark_unprocessed', row_id=rid) }}" style="margin:0">
+                        <input type="hidden" name="serial"  value="{{ printer.serial_display }}">
+                        <input type="hidden" name="couleur" value="{{ couleur_val_form }}">
                         <button type="submit" class="btn-unmark">↩</button>
                       </form>
                     </div>
@@ -1199,32 +1179,6 @@
   slopeColorSel.addEventListener('change', () => { if (currentSerial) loadAndRender(currentSerial, slopeColorSel.value); });
   slopeModal.addEventListener('hidden.bs.modal', () => { destroySlopeChart(); currentSerial = null; setWarn(null); slopeValuePill.textContent = 'pente : —'; });
 </script>
-
-
-  <!-- PAGINATION -->
-  {% if total_pages is defined and total_pages > 1 %}
-  <div style="display:flex;align-items:center;justify-content:center;gap:0.5rem;padding:1.5rem 0 2rem;flex-wrap:wrap;">
-    {% if current_page > 1 %}
-      <a href="?{{ request.query_string.decode().replace('page=' ~ current_page, '') }}&page={{ current_page - 1 }}"
-         style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:var(--text-muted);text-decoration:none;">← Préc.</a>
-    {% endif %}
-    {% for p in range(1, total_pages + 1) %}
-      {% if p == current_page %}
-        <span style="background:#6c63ff;border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:#fff;font-weight:700;">{{ p }}</span>
-      {% elif p <= 2 or p >= total_pages - 1 or (p >= current_page - 2 and p <= current_page + 2) %}
-        <a href="?{{ request.query_string.decode().replace('page=' ~ current_page, '') }}&page={{ p }}"
-           style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:var(--text-muted);text-decoration:none;">{{ p }}</a>
-      {% elif p == 3 or p == total_pages - 2 %}
-        <span style="color:var(--text-muted)">…</span>
-      {% endif %}
-    {% endfor %}
-    {% if current_page < total_pages %}
-      <a href="?{{ request.query_string.decode().replace('page=' ~ current_page, '') }}&page={{ current_page + 1 }}"
-         style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:0.35rem 0.75rem;font-size:0.82rem;color:var(--text-muted);text-decoration:none;">Suiv. →</a>
-    {% endif %}
-    <span style="font-size:0.8rem;color:var(--text-muted);">Page {{ current_page }} / {{ total_pages }}</span>
-  </div>
-  {% endif %}
 
 </body>
 </html>

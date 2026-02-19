@@ -2,7 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>⚠️ Alertes — Contrats annulés</title>
+  <title>🔔 Toners inchangés</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -19,14 +19,12 @@
       --red:         #ef4444;
       --orange:      #f59e0b;
       --green:       #22c55e;
+      --prio0:       #7c3aed;
       --prio1:       #ef4444;
       --prio2:       #f59e0b;
       --prio3:       #eab308;
       --prio4:       #22c55e;
     }
-    /* ============================================================
-       LIGHT OVERRIDE
-       ============================================================ */
     html.light {
       --bg:          #f0f2f5;
       --surface:     #ffffff;
@@ -38,6 +36,7 @@
       --red:         #dc2626;
       --orange:      #d97706;
       --green:       #16a34a;
+      --prio0:       #6d28d9;
       --prio1:       #dc2626;
       --prio2:       #d97706;
       --prio3:       #ca8a04;
@@ -83,15 +82,15 @@
       font-weight: 600;
       transition: all 0.15s;
     }
-    .btn-back:hover { border-color: var(--accent); color: var(--text); text-decoration:none; }
+    .btn-back:hover { border-color: var(--accent); color: var(--text); text-decoration: none; }
 
     /* ---- MAIN ---- */
     .main-wrap { max-width: 1200px; margin: 0 auto; padding: 1.75rem 1.5rem; }
 
     /* ---- PAGE HEADER ---- */
     .page-header {
-      background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(239,68,68,0.05));
-      border: 1px solid rgba(239,68,68,0.25);
+      background: linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.04));
+      border: 1px solid rgba(245,158,11,0.3);
       border-radius: 14px;
       padding: 1.25rem 1.5rem;
       margin-bottom: 1.5rem;
@@ -101,10 +100,10 @@
       flex-wrap: wrap;
       gap: 1rem;
     }
-    .page-header h1 { margin:0; font-size:1.25rem; font-weight:700; color: var(--text); }
-    .page-header p  { margin:0.25rem 0 0; font-size:0.82rem; color: var(--text-muted); max-width:520px; }
+    .page-header h1 { margin: 0; font-size: 1.25rem; font-weight: 700; color: var(--text); }
+    .page-header p  { margin: 0.25rem 0 0; font-size: 0.82rem; color: var(--text-muted); max-width: 560px; }
 
-    .stat-chips { display:flex; gap:0.6rem; flex-wrap:wrap; }
+    .stat-chips { display: flex; gap: 0.6rem; flex-wrap: wrap; }
     .stat-chip {
       background: var(--surface);
       border: 1px solid var(--border);
@@ -121,13 +120,13 @@
     /* ---- PRINTER CARD ---- */
     .printer-card {
       background: var(--surface);
-      border: 1px solid rgba(239,68,68,0.3);
+      border: 1px solid rgba(245,158,11,0.3);
       border-radius: 12px;
       margin-bottom: 1rem;
       overflow: hidden;
       transition: border-color 0.2s;
     }
-    .printer-card:hover { border-color: var(--red); }
+    .printer-card:hover { border-color: var(--orange); }
 
     .pc-header {
       padding: 0.85rem 1.1rem 0.6rem;
@@ -146,42 +145,41 @@
       align-items: center;
       gap: 0.5rem;
     }
-    .pc-serial .icon { font-size: 0.95rem; }
 
-    .pc-meta { display:flex; flex-wrap:wrap; gap:0.9rem; margin-top:0.3rem; }
-    .pc-meta span { font-size:0.79rem; color:var(--text-muted); }
-    .pc-meta strong { color:var(--text); font-weight:600; }
+    .pc-meta { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 0.3rem; }
+    .pc-meta span { font-size: 0.79rem; color: var(--text-muted); }
+    .pc-meta strong { color: var(--text); font-weight: 600; }
 
-    /* Badge "Contrat annulé" */
-    .badge-annule {
+    /* Badge "Toner inchangé" */
+    .badge-inchange {
       display: inline-flex;
       align-items: center;
       gap: 0.3rem;
-      background: rgba(239,68,68,0.14);
-      border: 1px solid rgba(239,68,68,0.35);
+      background: rgba(245,158,11,0.14);
+      border: 1px solid rgba(245,158,11,0.4);
       border-radius: 6px;
       padding: 0.2rem 0.6rem;
       font-size: 0.76rem;
       font-weight: 600;
-      color: var(--red);
+      color: var(--orange);
       margin-top: 0.4rem;
     }
 
-    /* Prio badge */
-    .badge-prio { display:inline-block; border-radius:6px; padding:0.15rem 0.55rem; font-size:0.75rem; font-weight:700; color:#fff; }
-    .badge-prio-1 { background:var(--prio1); }
-    .badge-prio-2 { background:var(--prio2); }
-    .badge-prio-3 { background:var(--prio3); color:#1a1a1a; }
-    .badge-prio-4 { background:var(--prio4); }
+    /* Prio badges */
+    .badge-prio { display: inline-block; border-radius: 6px; padding: 0.15rem 0.55rem; font-size: 0.75rem; font-weight: 700; color: #fff; }
     .badge-prio-0 {
-      background: #7c3aed;
+      background: var(--prio0);
       box-shadow: 0 0 0 2px rgba(124,58,237,0.35);
       animation: pulse-p0 1.8s ease-in-out infinite;
     }
     @keyframes pulse-p0 {
       0%,100% { box-shadow: 0 0 0 2px rgba(124,58,237,0.35); }
-      50%      { box-shadow: 0 0 0 5px rgba(124,58,237,0.0); }
+      50%      { box-shadow: 0 0 0 5px rgba(124,58,237,0.0);  }
     }
+    .badge-prio-1 { background: var(--prio1); }
+    .badge-prio-2 { background: var(--prio2); }
+    .badge-prio-3 { background: var(--prio3); color: #1a1a1a; }
+    .badge-prio-4 { background: var(--prio4); }
 
     /* Détails link */
     .btn-detail {
@@ -195,11 +193,11 @@
       font-weight: 600;
       transition: background 0.15s;
     }
-    .btn-detail:hover { background:var(--accent); color:#fff; text-decoration:none; }
+    .btn-detail:hover { background: var(--accent); color: #fff; text-decoration: none; }
 
     /* ---- TABLE ---- */
     .pc-table-wrap { border-top: 1px solid var(--border); overflow-x: auto; }
-    table.toner-table { width:100%; border-collapse:collapse; font-size:0.8rem; }
+    table.toner-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
     table.toner-table th {
       background: var(--surface2);
       color: var(--text-muted);
@@ -219,7 +217,10 @@
       vertical-align: middle;
     }
     table.toner-table tr:last-child td { border-bottom: none; }
-    table.toner-table tr:hover td { background: rgba(108,99,255,0.04); }
+    table.toner-table tr:hover td { background: rgba(245,158,11,0.03); }
+
+    /* Highlight row si P0 */
+    table.toner-table tr.row-p0 td { background: rgba(124,58,237,0.06); }
 
     /* ---- EMPTY / SUCCESS ---- */
     .success-state {
@@ -233,9 +234,7 @@
     }
     .success-state .icon { font-size: 2rem; margin-bottom: 0.4rem; }
 
-    /* ============================================================
-       THEME TOGGLE PILL
-       ============================================================ */
+    /* ---- THEME TOGGLE ---- */
     .theme-toggle {
       display: flex;
       align-items: center;
@@ -259,12 +258,11 @@
     }
     html.light .theme-toggle .knob { transform: translateX(22px); }
 
-    /* top-bar right group (toggle + back btn) */
     .top-bar-right { display: flex; align-items: center; gap: 0.6rem; }
 
-    ::-webkit-scrollbar { width:6px; height:6px; }
-    ::-webkit-scrollbar-track { background:var(--bg); }
-    ::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
   </style>
 </head>
 
@@ -272,7 +270,7 @@
 
 <!-- TOP BAR -->
 <nav class="top-bar">
-  <div class="logo">toner<span>.</span>ai <span style="color:var(--text-muted); font-family:'DM Sans',sans-serif; font-weight:500; font-size:0.82rem;">— Alertes</span></div>
+  <div class="logo">toner<span>.</span>ai <span style="color:var(--text-muted); font-family:'DM Sans',sans-serif; font-weight:500; font-size:0.82rem;">— Toners inchangés</span></div>
   <div class="top-bar-right">
     <button class="theme-toggle" id="themeToggle" aria-label="Basculer thème">
       <span class="knob" id="themeIcon">🌙</span>
@@ -287,11 +285,11 @@
   <!-- PAGE HEADER -->
   <div class="page-header">
     <div>
-      <h1>⚠️ Alertes — Contrats annulés</h1>
-      <p>Imprimantes dont le contrat est annulé mais avec une date de fin prévue. Les recommandations de toners sont masquées sur l'accueil ; elles sont regroupées ici.</p>
+      <h1>🔔 Toners inchangés</h1>
+      <p>Cartouches livrées via le bon de livraison mais dont le niveau KPAX est toujours bas — le client n'a pas encore remplacé la cartouche.</p>
     </div>
     <div class="stat-chips">
-      <div class="stat-chip"><span class="label">Recommandations</span><span class="val">{{ total_alertes }}</span></div>
+      <div class="stat-chip"><span class="label">Toners concernés</span><span class="val">{{ total_inchange }}</span></div>
       <div class="stat-chip"><span class="label">Imprimantes</span><span class="val">{{ grouped_printers | length }}</span></div>
     </div>
   </div>
@@ -305,7 +303,7 @@
       <div class="pc-header">
         <div>
           <div class="pc-serial">
-            <span class="icon">🖨️</span>
+            <span>🖨️</span>
             <a href="/printer/{{ printer.serial_display }}" style="color:var(--text);text-decoration:none;font-weight:600;">{{ printer.serial_display }}</a>
             <a href="/printer/{{ printer.serial_display }}" class="btn-detail">Détails →</a>
           </div>
@@ -316,8 +314,10 @@
             {% if printer.contract %}<span><strong>Contrat</strong> {{ printer.contract }}</span>{% endif %}
           </div>
 
-          {% if printer.date_fin_contrat %}
-            <div class="badge-annule">⚠️ Contrat annulé — fin prévue le {{ printer.date_fin_contrat }}</div>
+          {% if printer.max_jours_inchange %}
+            <div class="badge-inchange">
+              🔔 Livré il y a {{ printer.max_jours_inchange }}j — cartouche non remplacée
+            </div>
           {% endif %}
         </div>
 
@@ -339,12 +339,14 @@
               <th>Jours restants</th>
               <th>Date rupture est.</th>
               <th>Priorité</th>
+              <th>Livré il y a</th>
               <th>Commentaire</th>
             </tr>
           </thead>
           <tbody>
             {% for row in printer.rows %}
-              <tr>
+              {% set prio_val = row.get(col_priority) %}
+              <tr {% if prio_val is not none and prio_val|int == 0 %}class="row-p0"{% endif %}>
                 <td><strong>{{ row.get(col_toner, "") }}</strong></td>
                 <td>
                   {% if row.get(col_last_pct) is not none %}
@@ -352,22 +354,26 @@
                   {% else %}—{% endif %}
                 </td>
                 <td>
-                  {% set jours_reel = row.get('jours_reel') %}
-                  {% if jours_reel is not none and jours_reel == jours_reel %}
-                    {% if jours_reel < 0 %}
-                      <span style="color:var(--red); font-weight:700;">{{ jours_reel|int }} j ⚠️</span>
+                  {% set jd = row.get('jours_display') %}
+                  {% if jd is not none and jd == jd %}
+                    {% if jd < 0 %}
+                      <span style="color:var(--prio0);font-weight:700;">{{ jd|int }}j ⚠️</span>
                     {% else %}
-                      {{ jours_reel|int }}
+                      {{ jd|int }}j
                     {% endif %}
-                  {% else %}
-                    —
-                  {% endif %}
+                  {% else %}—{% endif %}
                 </td>
                 <td>{{ row.get(col_stockout, "—") | format_date }}</td>
                 <td>
-                  {% if row.get(col_priority) is not none %}
-                    <span class="badge-prio badge-prio-{{ row.get(col_priority) | int }}">P{{ row.get(col_priority) | int }}</span>
+                  {% if prio_val is not none %}
+                    <span class="badge-prio badge-prio-{{ prio_val|int }}">P{{ prio_val|int }}</span>
                   {% endif %}
+                </td>
+                <td>
+                  {% set jinc = row.get('toner_inchange_jours') %}
+                  {% if jinc is not none and jinc == jinc %}
+                    <span style="color:var(--orange);font-weight:600;">{{ jinc|int }}j</span>
+                  {% else %}—{% endif %}
                 </td>
                 <td style="color:var(--text-muted);">{{ row.get(col_comment, "") }}</td>
               </tr>
@@ -382,14 +388,12 @@
   {% else %}
     <div class="success-state">
       <div class="icon">✅</div>
-      Aucune alerte — tous les contrats sont actifs ou sans date de fin prévue.
+      Aucun toner inchangé détecté — toutes les cartouches livrées ont bien été remplacées.
     </div>
   {% endif %}
 
 </div><!-- /main-wrap -->
-<!-- ============================================================
-     THEME TOGGLE JS (same localStorage key as index)
-     ============================================================ -->
+
 <script>
   (function(){
     const KEY  = 'tonerai-theme';
@@ -401,7 +405,6 @@
       if (t === 'light') { html.classList.add('light');    icon.textContent = '☀️'; }
       else               { html.classList.remove('light'); icon.textContent = '🌙'; }
     }
-    // init before first paint
     apply(localStorage.getItem(KEY) || 'dark');
 
     btn.addEventListener('click', () => {
