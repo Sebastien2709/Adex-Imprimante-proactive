@@ -2,7 +2,7 @@ from pathlib import Path
 import pandas as pd
 import re
 
-RAW = Path("data/raw")
+RAW = Path("data/raw/xrm")
 INTERIM = Path("data/interim")
 INTERIM.mkdir(parents=True, exist_ok=True)
 
@@ -49,7 +49,7 @@ def find_latest(pattern: str) -> Path:
     return latest
 
 def load_kpax_consumables_adex() -> pd.DataFrame:
-    path = find_latest("AI*Export*Kpax*consumables*ADEXGROUP*")
+    path = find_latest("AI*[Ee]xport*[Kk]pax*consumables*ADEXGROUP*")
     df = pd.read_csv(path, sep="|", dtype=str, encoding="utf-8", engine="python")
     return df
 
