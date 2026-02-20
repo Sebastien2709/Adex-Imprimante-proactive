@@ -2,236 +2,269 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <title>Détails imprimante {{ serial_display }}</title>
+  <title>🖨️ {{ serial_display }} — toner.ai</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link
-    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
-    rel="stylesheet"
-  >
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0f1117; --surface: #161820; --surface2: #1e2028;
+      --border: #2a2d35; --text: #e2e4e9; --text-muted: #7a7f8e;
+      --accent: #6c63ff; --red: #ef4444; --orange: #f59e0b; --green: #22c55e;
+      --prio1: #ef4444; --prio2: #f59e0b; --prio3: #eab308; --prio4: #22c55e;
+    }
+    html.light {
+      --bg: #f0f2f5; --surface: #ffffff; --surface2: #f4f6f9;
+      --border: #dde1e7; --text: #1e2028; --text-muted: #6b7280;
+      --accent: #5b52e5; --red: #dc2626; --orange: #d97706; --green: #16a34a;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; margin: 0; transition: background .3s, color .3s; }
+    .top-bar { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.75rem 2rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+    .top-bar .logo { font-family: 'DM Mono', monospace; font-weight: 500; font-size: 1rem; color: var(--accent); letter-spacing: 0.04em; }
+    .top-bar .logo span { color: var(--text-muted); }
+    .top-bar-right { display: flex; align-items: center; gap: 0.6rem; }
+    .btn-back { background: var(--surface2); border: 1px solid var(--border); color: var(--text-muted); border-radius: 8px; padding: 0.3rem 0.75rem; font-size: 0.8rem; text-decoration: none; font-weight: 600; transition: all 0.15s; }
+    .btn-back:hover { border-color: var(--accent); color: var(--text); text-decoration: none; }
+    .main-wrap { max-width: 1200px; margin: 0 auto; padding: 1.75rem 1.5rem; }
+
+    /* HEADER */
+    .page-header {
+      background: linear-gradient(135deg, rgba(108,99,255,0.12), rgba(108,99,255,0.04));
+      border: 1px solid rgba(108,99,255,0.25); border-radius: 14px;
+      padding: 1.25rem 1.5rem; margin-bottom: 1.5rem;
+      display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 1rem;
+    }
+    .page-header h1 { margin: 0; font-family: 'DM Mono', monospace; font-size: 1.35rem; font-weight: 600; color: var(--text); }
+    .page-header .meta { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 0.5rem; }
+    .page-header .meta span { font-size: 0.82rem; color: var(--text-muted); }
+    .page-header .meta strong { color: var(--text); font-weight: 600; }
+    .badge-prio { display: inline-block; border-radius: 6px; padding: 0.2rem 0.65rem; font-size: 0.82rem; font-weight: 700; color: #fff; }
+    .badge-prio-1 { background: var(--prio1); } .badge-prio-2 { background: var(--prio2); }
+    .badge-prio-3 { background: var(--prio3); color: #1a1a1a; } .badge-prio-4 { background: var(--prio4); }
+
+    /* CARDS */
+    .card-block { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 1.25rem; overflow: hidden; }
+    .card-block-header { background: var(--surface2); border-bottom: 1px solid var(--border); padding: 0.65rem 1.1rem; font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em; }
+    .card-block-body { padding: 1rem 1.1rem; }
+
+    /* CHIPS */
+    .chips-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+    .chip { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 0.35rem 0.75rem; font-size: 0.8rem; display: flex; align-items: center; gap: 0.45rem; }
+    .chip .label { color: var(--text-muted); font-size: 0.73rem; }
+    .chip .val { font-family: 'DM Mono', monospace; font-weight: 500; color: var(--text); }
+    .chip.pct-low  { border-color: rgba(239,68,68,0.4); }
+    .chip.pct-mid  { border-color: rgba(245,158,11,0.4); }
+    .chip.pct-ok   { border-color: rgba(34,197,94,0.3); }
+
+    /* TABLE */
+    .toner-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+    .toner-table th { background: var(--surface2); color: var(--text-muted); font-weight: 600; font-size: 0.69rem; text-transform: uppercase; letter-spacing: 0.06em; padding: 0.5rem 0.75rem; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--border); }
+    .toner-table td { padding: 0.55rem 0.75rem; border-bottom: 1px solid var(--border); color: var(--text); vertical-align: middle; }
+    .toner-table tr:last-child td { border-bottom: none; }
+    .toner-table tr:hover td { background: rgba(108,99,255,0.04); }
+
+    /* BADGES */
+    .badge-inchange { display: inline-flex; align-items: center; gap: 0.3rem; background: rgba(245,158,11,0.14); border: 1px solid rgba(245,158,11,0.35); border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.74rem; font-weight: 600; color: var(--orange); }
+    .warn-banner { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.3); border-radius: 8px; padding: 0.55rem 0.85rem; font-size: 0.82rem; color: var(--orange); margin-bottom: 0.75rem; display: none; }
+    .warn-banner.show { display: block; }
+
+    /* THEME TOGGLE */
+    .theme-toggle { display: flex; align-items: center; width: 48px; height: 26px; border-radius: 13px; background: var(--surface2); border: 1.5px solid var(--border); cursor: pointer; padding: 0 2px; transition: background .3s, border-color .3s; }
+    .theme-toggle:hover { border-color: var(--accent); }
+    .theme-toggle .knob { width: 20px; height: 20px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: 12px; line-height: 1; box-shadow: 0 1px 4px rgba(0,0,0,.25); transition: transform .3s cubic-bezier(.4,0,.2,1); }
+    html.light .theme-toggle .knob { transform: translateX(22px); }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
 </head>
+<body>
 
-<body class="bg-light">
-  <div class="container py-4">
+<nav class="top-bar">
+  <div class="logo">toner<span>.</span>ai <span style="font-family:'DM Sans',sans-serif;font-weight:500;font-size:0.82rem;">— Détails imprimante</span></div>
+  <div class="top-bar-right">
+    <button class="theme-toggle" id="themeToggle" aria-label="Basculer thème"><span class="knob" id="themeIcon">🌙</span></button>
+    <a href="/" class="btn-back">← Retour</a>
+  </div>
+</nav>
 
-    <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
-      <div>
-        <h1 class="h4 mb-1">Imprimante : {{ serial_display }}</h1>
-        <div class="text-muted">
-          {% if client %}<span><strong>Client:</strong> {{ client }}</span>{% endif %}
-          {% if city %}<span class="ms-3"><strong>Ville:</strong> {{ city }}</span>{% endif %}
-          {% if contract %}<span class="ms-3"><strong>Contrat:</strong> {{ contract }}</span>{% endif %}
-        </div>
+<div class="main-wrap">
 
-        <div class="text-muted mt-1">
-          {% if min_stockout_date %}<span><strong>Prochaine rupture estimée:</strong> {{ min_stockout_date }}</span>{% endif %}
-          {% if min_days_left is not none %}<span class="ms-3"><strong>Jours restants min:</strong> {{ min_days_left }}</span>{% endif %}
-          {% if min_priority is not none %}<span class="ms-3"><strong>Priorité min:</strong> {{ min_priority }}</span>{% endif %}
-        </div>
-      </div>
-
-      <div class="text-end">
-        <a href="/" class="btn btn-outline-secondary">← Retour</a>
-      </div>
-    </div>
-
-    <!-- PENTES (optionnel, mais utile) -->
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <div class="d-flex flex-wrap gap-2 align-items-center">
-          <span class="badge bg-light text-dark"><strong>black</strong> : {% if slopes.black is not none %}{{ "%.3f"|format(slopes.black) }} %/jour{% else %}—{% endif %}</span>
-          <span class="badge bg-light text-dark"><strong>cyan</strong> : {% if slopes.cyan is not none %}{{ "%.3f"|format(slopes.cyan) }} %/jour{% else %}—{% endif %}</span>
-          <span class="badge bg-light text-dark"><strong>magenta</strong> : {% if slopes.magenta is not none %}{{ "%.3f"|format(slopes.magenta) }} %/jour{% else %}—{% endif %}</span>
-          <span class="badge bg-light text-dark"><strong>yellow</strong> : {% if slopes.yellow is not none %}{{ "%.3f"|format(slopes.yellow) }} %/jour{% else %}—{% endif %}</span>
-          <span class="text-muted small ms-2">(pente = régression linéaire, %/jour)</span>
-        </div>
+  <!-- HEADER -->
+  <div class="page-header">
+    <div>
+      <h1>🖨️ {{ serial_display }}</h1>
+      <div class="meta">
+        {% if client %}<span><strong>Client</strong> {{ client }}</span>{% endif %}
+        {% if city %}<span><strong>Ville</strong> {{ city }}</span>{% endif %}
+        {% if contract %}<span><strong>Contrat</strong> {{ contract }}</span>{% endif %}
+        {% if min_stockout_date %}<span><strong>Prochaine rupture</strong> {{ min_stockout_date }}</span>{% endif %}
+        {% if min_days_left is not none %}<span><strong>Jours min</strong> {{ min_days_left | int }}</span>{% endif %}
       </div>
     </div>
+    <div>{% if min_priority is not none %}<span class="badge-prio badge-prio-{{ min_priority }}">P{{ min_priority }}</span>{% endif %}</div>
+  </div>
 
-    <!-- GRAPHE 4 COURBES -->
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h2 class="h6 mb-3">Historique consommation (KPAX)</h2>
-        <div class="alert alert-warning d-none" id="historyWarn"></div>
-        <canvas id="historyChart" height="120"></canvas>
-      </div>
-    </div>
-
-    <div class="card shadow-sm mb-3">
-      <div class="card-body">
-        <h2 class="h6 mb-3">État des toners (KPAX)</h2>
-        <div class="table-responsive">
-          <table class="table table-sm align-middle">
-            <thead class="table-light">
-              <tr>
-                <th>Couleur</th>
-                <th>% actuel</th>
-                <th>Dernière remontée</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for t in kpax_status %}
-                <tr>
-                  <td><strong>{{ t.color }}</strong></td>
-                  <td>
-                    {% if t.last_pct is not none %}
-                      {{ t.last_pct | round(0) }}%
-                    {% else %}
-                      —
-                    {% endif %}
-                  </td>
-                  <td>{{ t.last_update or "—" }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-        <div class="text-muted small">
-          (Ce tableau montre les 4 couleurs issues de KPAX, même si la recommandation ne concerne qu’un seul toner.)
-        </div>
-      </div>
-    </div>
-
-    <!-- TABLE TONERS / % -->
-    <div class="card shadow-sm">
-      <div class="card-body">
-        <h2 class="h6 mb-3">Toners de l’imprimante</h2>
-
-        <div class="table-responsive">
-          <table class="table table-sm align-middle">
-            <thead class="table-light">
-              <tr>
-                <th>ID</th>
-                <th>Toner</th>
-                <th>Couleur</th>
-                <th>Jours restants</th>
-                <th>Date rupture estimée</th>
-                <th>Priorité</th>
-                <th>Dernière remontée</th>
-                <th>% actuel</th>
-                <th>Type livraison</th>
-                <th>Commentaire</th>
-              </tr>
-            </thead>
-            <tbody>
-              {% for r in rows %}
-                <tr>
-                  <td>{{ r.get(col_id, "") }}</td>
-                  <td>{{ r.get(col_toner, "") }}</td>
-                  <td>{{ r.get("couleur", "") }}</td>
-                  <td>
-                    {% set jours_reel = r.get('jours_reel') %}
-                    {% if jours_reel is not none and jours_reel == jours_reel %}
-                      {% if jours_reel < 0 %}
-                        <span style="color:#dc2626; font-weight:700;">{{ jours_reel|int }} j ⚠️</span>
-                      {% else %}
-                        {{ jours_reel|int }}
-                      {% endif %}
-                    {% else %}
-                      —
-                    {% endif %}
-                  </td>
-                  <td>{{ r.get(col_stockout, "") | format_date }}</td>
-                  <td>{{ r.get(col_priority, "") }}</td>
-                  <td>{{ r.get(col_last_update, "") | format_date }}</td>
-                  <td>
-                    {% if r.get(col_last_pct) is not none %}
-                      {{ r.get(col_last_pct) | round(0) }}%
-                    {% endif %}
-                  </td>
-                  <td>{{ r.get(col_type_liv, "") }}</td>
-                  <td>{{ r.get(col_comment, "") }}</td>
-                </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-        </div>
-
+  <!-- KPAX STATUS -->
+  <div class="card-block">
+    <div class="card-block-header">📊 État des toners (KPAX)</div>
+    <div class="card-block-body">
+      <div class="chips-row">
+        {% for t in kpax_status %}
+          {% set dot = "#4b5563" %}
+          {% if t.color == "black" %}{% set dot = "#e2e4e9" %}
+          {% elif t.color == "cyan" %}{% set dot = "#06b6d4" %}
+          {% elif t.color == "magenta" %}{% set dot = "#ec4899" %}
+          {% elif t.color == "yellow" %}{% set dot = "#eab308" %}{% endif %}
+          {% set cls = "" %}
+          {% if t.last_pct is not none %}
+            {% if t.last_pct < 15 %}{% set cls = "pct-low" %}
+            {% elif t.last_pct < 35 %}{% set cls = "pct-mid" %}
+            {% else %}{% set cls = "pct-ok" %}{% endif %}
+          {% endif %}
+          <div class="chip {{ cls }}">
+            <span style="width:9px;height:9px;border-radius:50%;background:{{ dot }};display:inline-block;flex-shrink:0;"></span>
+            <span style="font-weight:600;">{{ t.color }}</span>
+            <span class="val">{% if t.last_pct is not none %}{{ t.last_pct | round(0) | int }}%{% else %}—{% endif %}</span>
+            <span class="label">{% if t.last_update %}{{ t.last_update }}{% else %}—{% endif %}</span>
+          </div>
+        {% endfor %}
       </div>
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-  <script>
-    const serial = {{ serial_display|tojson }};
-    const warn = document.getElementById("historyWarn");
+  <!-- PENTES -->
+  <div class="card-block">
+    <div class="card-block-header">📉 Pentes de consommation (%/jour)</div>
+    <div class="card-block-body">
+      <div class="chips-row">
+        {% for color, dot in [("black","#e2e4e9"),("cyan","#06b6d4"),("magenta","#ec4899"),("yellow","#eab308")] %}
+          <div class="chip">
+            <span style="width:9px;height:9px;border-radius:50%;background:{{ dot }};display:inline-block;flex-shrink:0;"></span>
+            <span class="label">{{ color }}</span>
+            <span class="val">
+              {% if slopes[color] is not none %}{{ "%.3f" | format(slopes[color]) }} %/j{% else %}—{% endif %}
+            </span>
+          </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
 
-    function setWarn(msg) {
-      if (!msg) {
-        warn.classList.add("d-none");
-        warn.textContent = "";
-        return;
-      }
-      warn.textContent = msg;
-      warn.classList.remove("d-none");
-    }
+  <!-- GRAPHE -->
+  <div class="card-block">
+    <div class="card-block-header">📈 Historique consommation</div>
+    <div class="card-block-body">
+      <div class="warn-banner" id="historyWarn"></div>
+      <canvas id="historyChart" style="max-height:260px;"></canvas>
+    </div>
+  </div>
 
-    async function loadHistory() {
-      try {
-        const res = await fetch(`/api/printer_history?serial=${encodeURIComponent(serial)}`);
-        if (!res.ok) {
-          setWarn(`Erreur API (${res.status}) sur /api/printer_history`);
-          return;
-        }
+  <!-- TABLE -->
+  <div class="card-block">
+    <div class="card-block-header">🗂️ Toners recommandés</div>
+    <div style="overflow-x:auto;">
+      <table class="toner-table">
+        <thead>
+          <tr>
+            <th>ID</th><th>Toner</th><th>Couleur</th><th>Jours rest.</th>
+            <th>Date rupture</th><th>Priorité</th><th>Dernière remontée</th>
+            <th>%</th><th>Type livraison</th><th>Commentaire</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in rows %}
+          <tr>
+            <td style="font-family:'DM Mono',monospace;font-size:0.73rem;color:var(--text-muted);">{{ r.get(col_id, "") }}</td>
+            <td><strong>{{ r.get(col_toner, "") }}</strong></td>
+            <td>{{ r.get("couleur", "") }}</td>
+            <td>
+              {% set d = r.get(col_days) %}
+              {% if d is not none and d == d %}
+                {% if d | float <= 0 %}<span style="color:var(--red);font-weight:700;">{{ d | int }} j ⚠️</span>
+                {% elif d | float <= 7 %}<span style="color:var(--orange);font-weight:600;">{{ d | int }} j</span>
+                {% else %}{{ d | int }} j{% endif %}
+              {% else %}—{% endif %}
+            </td>
+            <td>{{ r.get(col_stockout, "") or "—" }}</td>
+            <td>
+              {% set p = r.get(col_priority) %}
+              {% if p is not none %}<span class="badge-prio badge-prio-{{ p | int }}">P{{ p | int }}</span>{% endif %}
+            </td>
+            <td style="font-family:'DM Mono',monospace;font-size:0.73rem;color:var(--text-muted);">{{ r.get(col_last_update, "") or "—" }}</td>
+            <td>
+              {% set pct = r.get(col_last_pct) %}
+              {% if pct is not none %}
+                {% if pct | float < 15 %}<span style="color:var(--red);font-weight:600;">{{ pct | round(0) | int }}%</span>
+                {% elif pct | float < 35 %}<span style="color:var(--orange);font-weight:600;">{{ pct | round(0) | int }}%</span>
+                {% else %}{{ pct | round(0) | int }}%{% endif %}
+              {% endif %}
+            </td>
+            <td>{{ r.get(col_type_liv, "") }}</td>
+            <td>
+              {% set cmt = r.get(col_comment, "") | string %}
+              {% if "inchangé" in cmt | lower or "inchange" in cmt | lower %}
+                <span class="badge-inchange">🔔 Toner inchangé</span>
+                <span style="color:var(--text-muted);font-size:0.73rem;display:block;margin-top:0.2rem;">{{ cmt }}</span>
+              {% else %}
+                <span style="color:var(--text-muted);">{{ cmt }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-        const data = await res.json();
-        if (data.error) {
-          setWarn("Erreur: " + data.error);
-          return;
-        }
+</div>
 
-        const series = data.series || {};
-        const colors = ["black","cyan","magenta","yellow"];
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+(function(){
+  const KEY = 'tonerai-theme';
+  const html = document.documentElement;
+  const btn  = document.getElementById('themeToggle');
+  const icon = document.getElementById('themeIcon');
+  function apply(t){ if(t==='light'){html.classList.add('light');icon.textContent='☀️';}else{html.classList.remove('light');icon.textContent='🌙';} }
+  apply(localStorage.getItem(KEY)||'dark');
+  btn.addEventListener('click',()=>{ const n=html.classList.contains('light')?'dark':'light'; apply(n); localStorage.setItem(KEY,n); });
+})();
 
-        const dateSet = new Set();
-        colors.forEach(c => (series[c] || []).forEach(p => dateSet.add(p.date)));
-        const labels = Array.from(dateSet).sort();
+const serial = {{ serial_display | tojson }};
+const warnEl = document.getElementById('historyWarn');
+function setWarn(msg){ warnEl.textContent=msg||''; warnEl.classList.toggle('show',!!msg); }
 
-        if (!labels.length) {
-          setWarn("Aucun historique KPAX trouvé pour cette imprimante (kpax_history_light.csv vide / absent ?).");
-          return;
-        }
-
-        function buildData(color) {
-          const m = new Map((series[color] || []).map(p => [p.date, p.pct]));
-          return labels.map(d => (m.has(d) ? m.get(d) : null));
-        }
-
-        const COLOR_MAP = {
-          black: "rgb(0,0,0)",
-          cyan: "rgb(0,174,239)",
-          magenta: "rgb(236,0,140)",
-          yellow: "rgb(255,242,0)",
-        };
-
-        const datasets = colors.map(c => ({
-          label: c,
-          data: buildData(c),
-          spanGaps: true,
-          tension: 0.25,
-          pointRadius: 1.5,
-          borderColor: COLOR_MAP[c],
-          backgroundColor: COLOR_MAP[c],
-        }));
-
-        const ctx = document.getElementById("historyChart");
-        new Chart(ctx, {
-          type: "line",
-          data: { labels, datasets },
-          options: {
-            responsive: true,
-            plugins: { legend: { display: true } },
-            scales: { y: { beginAtZero: true, suggestedMax: 100 } }
-          }
-        });
-
-        setWarn(null);
-      } catch (e) {
-        setWarn("Erreur JS (fetch/JSON) : " + (e?.message || e));
-      }
-    }
-
-    loadHistory();
-  </script>
-
+async function loadHistory(){
+  try{
+    const res = await fetch(`/api/printer_history?serial=${encodeURIComponent(serial)}`);
+    if(!res.ok){ setWarn(`Erreur API (${res.status})`); return; }
+    const data = await res.json();
+    if(data.error){ setWarn('Erreur: '+data.error); return; }
+    const series = data.series||{};
+    const colors = ['black','cyan','magenta','yellow'];
+    const dateSet = new Set();
+    colors.forEach(c=>(series[c]||[]).forEach(p=>dateSet.add(p.date)));
+    const labels = Array.from(dateSet).sort();
+    if(!labels.length){ setWarn('Aucun historique KPAX trouvé pour cette imprimante.'); return; }
+    const COLOR_MAP = { black:'rgb(200,200,210)', cyan:'rgb(0,174,239)', magenta:'rgb(236,0,140)', yellow:'rgb(234,179,8)' };
+    const datasets = colors.map(c=>{
+      const m = new Map((series[c]||[]).map(p=>[p.date,p.pct]));
+      return { label:c, data:labels.map(d=>m.has(d)?m.get(d):null), spanGaps:true, tension:0.25, pointRadius:2, borderColor:COLOR_MAP[c], backgroundColor:COLOR_MAP[c] };
+    });
+    const isDark = !document.documentElement.classList.contains('light');
+    const gc = isDark?'rgba(255,255,255,0.07)':'rgba(0,0,0,0.07)';
+    const tc = isDark?'#7a7f8e':'#6b7280';
+    new Chart(document.getElementById('historyChart'),{
+      type:'line', data:{labels,datasets},
+      options:{ responsive:true, plugins:{legend:{display:true,labels:{color:tc,boxWidth:12,font:{size:12}}}},
+        scales:{ x:{ticks:{color:tc,maxTicksLimit:10,font:{size:11}},grid:{color:gc}}, y:{beginAtZero:true,suggestedMax:100,ticks:{color:tc},grid:{color:gc}} } }
+    });
+    setWarn(null);
+  }catch(e){ setWarn('Erreur JS: '+(e?.message||e)); }
+}
+loadHistory();
+</script>
 </body>
 </html>
