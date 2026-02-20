@@ -237,8 +237,9 @@ def download_data_from_supabase():
             _download_file(client, remote_name, local_path)
 
 
-# Appel au démarrage (Gunicorn + python app.py)
-download_data_from_supabase()
+# Lancement en arrière-plan — Gunicorn démarre immédiatement sans attendre
+import threading
+threading.Thread(target=download_data_from_supabase, daemon=True).start()
 
 
 # ============================================================
@@ -932,8 +933,7 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
     overdue  = (-jours).clip(lower=0).fillna(0).astype(int).astype(str)
     days_str = jours.fillna(0).astype(int).astype(str) + "j"
     pct_str  = pct.fillna(0).astype(int).astype(str) + "%"
-    nb_client_safe = nb_client.fillna(1)
-    others = (nb_client_safe - 1).clip(lower=0).astype(int).astype(str)
+    others   = (nb_client - 1).clip(lower=0).astype(int).astype(str)
     m_p0   = (prio == 0) | (jours < 0)
     m_vide = pct == 0
     m_p1   = (~m_p0) & ((prio == 1) | (jours.between(0, 3, inclusive="both")))
@@ -943,8 +943,8 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
     conditions = [
         m_p0 & m_vide, m_p0 & ~m_vide,
         m_p1 & (pct <= 1), m_p1 & (pct > 1) & (pct <= 5), m_p1,
-        m_p2 & (nb_client_safe > 1), m_p2,
-        m_p3 & (nb_client_safe > 1), m_p3,
+        m_p2 & (nb_client > 1), m_p2,
+        m_p3 & (nb_client > 1), m_p3,
         m_p4 & (pct == 0), m_p4 & (pct > 0) & (pct <= 1), m_p4,
     ]
     choices = [
@@ -955,7 +955,7 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
         "Rupture dans " + days_str + " — prioriser",
         "Prévoir envoi sous " + days_str + " — à regrouper avec " + others + " autre(s)",
         "Prévoir envoi sous " + days_str,
-        "À planifier sous " + days_str + " — " + nb_client_safe.astype(int).astype(str) + " toner(s) à regrouper",  # ✅ CORRIGÉ ICI
+        "À planifier sous " + days_str + " — " + nb_client.astype(int).astype(str) + " toner(s) à regrouper",
         "À planifier sous " + days_str,
         "Toner vide — non remonté par le ML",
         "Niveau critique détecté par KPAX",
@@ -1084,12 +1084,8 @@ def api_printer_history():
 # UI
 # ============================================================
 
-@app.route("/", methods=["GET", "HEAD"])
+@app.route("/", methods=["GET"])
 def index():
-    # ✅ Bypass HEAD requests (Render healthcheck)
-    if request.method == "HEAD":
-        return "", 200
-
     df = get_data()
     df = enrich_with_toner_inchange(df)
     processed_ids = load_processed_ids()
