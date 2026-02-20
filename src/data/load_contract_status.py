@@ -77,11 +77,14 @@ def find_latest_meters_file():
     Trouve le fichier AI_Export_SalesPagesMeters_*.txt le plus récent.
     C'est dans CE fichier que se trouvent les colonnes de statut de contrat.
     """
-    pattern = "AI*Export*SalesPages*Meters*ADEXGROUP*"
-    candidates = list(RAW_DIR.glob(pattern))
+    # Essaie les deux variantes (avec ou sans espace entre SalesPages et Meters)
+    candidates = list(RAW_DIR.glob("AI*Export*SalesPages*Meters*ADEXGROUP*"))
+    if not candidates:
+        candidates = list(RAW_DIR.glob("AI*[Ee]xport*[Ss]ales*[Mm]eters*ADEXGROUP*"))
     
     if not candidates:
-        print(f"[load_contract_status] Aucun fichier trouvé pour : {pattern}")
+        print(f"[load_contract_status] Aucun fichier SalesPagesMeters trouvé dans {RAW_DIR}")
+        print(f"[load_contract_status] Fichiers disponibles : {[f.name for f in RAW_DIR.glob('*.txt')][:10]}")
         return None
     
     def extract_date(p: Path):
