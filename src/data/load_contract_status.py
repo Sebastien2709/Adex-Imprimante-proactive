@@ -20,7 +20,7 @@ import pandas as pd
 import re
 
 
-RAW_DIR = Path("data/raw")
+RAW_DIR = Path("data/raw/xrm")
 PROCESSED_DIR = Path("data/processed")
 OUTPUT_FILE = PROCESSED_DIR / "contract_status.parquet"
 
