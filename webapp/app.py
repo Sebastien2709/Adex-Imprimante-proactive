@@ -922,30 +922,41 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
     """Remplace les commentaires CSV par des messages précis. 100% vectorisé."""
     if COLUMN_COMMENT not in df.columns:
         df[COLUMN_COMMENT] = ""
+
     if COLUMN_CLIENT in df.columns:
-        nb_client = df.groupby(COLUMN_CLIENT)[COLUMN_CLIENT].transform("count")
+        nb_client = df.groupby(COLUMN_CLIENT)[COLUMN_CLIENT].transform("count").fillna(1)
     else:
-        nb_client = pd.Series(1, index=df.index)
-    prio  = pd.to_numeric(df.get(COLUMN_PRIORITY),  errors="coerce")
-    jours = pd.to_numeric(df.get("jours_display"),   errors="coerce")
-    pct   = pd.to_numeric(df.get(COLUMN_LAST_PCT),   errors="coerce")
+        nb_client = pd.Series(1.0, index=df.index)
+
+    prio  = pd.to_numeric(df.get(COLUMN_PRIORITY), errors="coerce").fillna(-99)
+    jours = pd.to_numeric(df.get("jours_display"),  errors="coerce").fillna(999)
+    pct   = pd.to_numeric(df.get(COLUMN_LAST_PCT),  errors="coerce").fillna(-1)
     fallback = df.get("fallback_p4", pd.Series(False, index=df.index)).fillna(False).astype(bool)
-    overdue  = (-jours).clip(lower=0).fillna(0).astype(int).astype(str)
-    days_str = jours.fillna(0).astype(int).astype(str) + "j"
-    pct_str  = pct.fillna(0).astype(int).astype(str) + "%"
+
+    overdue  = (-jours).clip(lower=0).astype(int).astype(str)
+    days_str = jours.clip(lower=0).astype(int).astype(str) + "j"
+    pct_str  = pct.clip(lower=0).astype(int).astype(str) + "%"
     others   = (nb_client - 1).clip(lower=0).astype(int).astype(str)
-    m_p0   = (prio == 0) | (jours < 0)
-    m_vide = pct == 0
-    m_p1   = (~m_p0) & ((prio == 1) | (jours.between(0, 3, inclusive="both")))
-    m_p2   = (~m_p0) & (~m_p1) & ((prio == 2) | (jours.between(4, 14, inclusive="both")))
-    m_p3   = (~m_p0) & (~m_p1) & (~m_p2) & ((prio == 3) | (jours.between(15, 30, inclusive="both")))
-    m_p4   = (prio == 4) | fallback
+
+    # Conversion numpy bool — obligatoire pour np.select
+    def b(s): return s.to_numpy(dtype=bool, na_value=False)
+
+    m_p0  = b((prio == 0) | (jours < 0))
+    m_p1  = b(~((prio == 0) | (jours < 0)) & ((prio == 1) | jours.between(0, 3,   inclusive="both")))
+    m_p2  = b(~((prio == 0) | (jours < 0)) & ~m_p1 & ((prio == 2) | jours.between(4, 14,  inclusive="both")))
+    m_p3  = b(~((prio == 0) | (jours < 0)) & ~m_p1 & ~m_p2 & ((prio == 3) | jours.between(15, 30, inclusive="both")))
+    m_p4  = b((prio == 4) | fallback)
+    m_0   = b(pct == 0)
+    m_1   = b(pct <= 1)
+    m_5   = b(pct <= 5)
+    m_mul = b(nb_client > 1)
+
     conditions = [
-        m_p0 & m_vide, m_p0 & ~m_vide,
-        m_p1 & (pct <= 1), m_p1 & (pct > 1) & (pct <= 5), m_p1,
-        m_p2 & (nb_client > 1), m_p2,
-        m_p3 & (nb_client > 1), m_p3,
-        m_p4 & (pct == 0), m_p4 & (pct > 0) & (pct <= 1), m_p4,
+        m_p0 & m_0,  m_p0 & ~m_0,
+        m_p1 & m_1,  m_p1 & ~m_1 & m_5,  m_p1,
+        m_p2 & m_mul, m_p2,
+        m_p3 & m_mul, m_p3,
+        m_p4 & m_0,  m_p4 & ~m_0 & m_1,  m_p4,
     ]
     choices = [
         "Rupture confirmée depuis " + overdue + "j — toner vide",
@@ -961,8 +972,11 @@ def _generate_contextual_comments(df: pd.DataFrame) -> pd.DataFrame:
         "Niveau critique détecté par KPAX",
         "Toner bas (" + pct_str + ") — surveiller",
     ]
-    new_comments = pd.Series(np.select(conditions, choices, default="Vérifier état du toner"), index=df.index)
-    existing = df[COLUMN_COMMENT].astype(str).str.strip()
+    new_comments = pd.Series(
+        np.select(conditions, choices, default="Vérifier état du toner"),
+        index=df.index
+    )
+    existing  = df[COLUMN_COMMENT].astype(str).str.strip()
     mask_keep = existing.str.startswith("⚠️") | existing.str.startswith("⏰")
     df[COLUMN_COMMENT] = new_comments.where(~mask_keep, existing)
     return df
