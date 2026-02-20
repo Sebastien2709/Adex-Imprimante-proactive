@@ -32,7 +32,7 @@ jobs:
           cache: 'pip'
 
       - name: Installer les dependances
-        run: pip install -r requirements.render.txt msal
+        run: pip install -r requirements.pipeline.txt
 
       - name: Creer les dossiers data
         run: |
