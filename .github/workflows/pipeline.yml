@@ -2,8 +2,8 @@ name: Pipeline quotidien
 
 on:
   schedule:
-    - cron: '0 5 * * *'   # tous les jours à 05h00 UTC (06h00 Paris hiver, 07h00 été)
-  workflow_dispatch:        # permet aussi de lancer manuellement depuis GitHub
+    - cron: '0 5 * * *'
+  workflow_dispatch:
 
 jobs:
   pipeline:
@@ -31,23 +31,23 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Installer les dépendances
+      - name: Installer les dependances
         run: pip install -r requirements.render.txt msal
 
-      - name: Créer les dossiers data
+      - name: Creer les dossiers data
         run: |
           mkdir -p data/raw/xrm
           mkdir -p data/interim
           mkdir -p data/processed
           mkdir -p data/outputs
 
-      # ── Data ingestion ────────────────────────────────────────
-      - name: Télécharger données SharePoint
-      - name: Debug — lister fichiers téléchargés
+      - name: Telecharger donnees SharePoint
+        run: python download_xrm_filtered.py
+
+      - name: Debug fichiers telecharges
         run: |
           echo "=== data/raw/xrm ==="
           ls -la data/raw/xrm/ || echo "(vide)"
-        run: python download_xrm_filtered.py
 
       - name: Ingest
         run: python -m src.data.ingest
@@ -64,14 +64,12 @@ jobs:
       - name: Load contract status
         run: python src/data/load_contract_status.py
 
-      # ── Features ─────────────────────────────────────────────
       - name: Detect resets
         run: python -m src.features.detect_resets
 
       - name: Compute slopes
         run: python -m src.features.compute_slopes
 
-      # ── Modèle ───────────────────────────────────────────────
       - name: Train XGB v21
         run: python -m src.model.train_xgb_v21
 
@@ -84,14 +82,13 @@ jobs:
       - name: Export recos business
         run: python -m src.model.export_recos_business
 
-      # ── Webapp ───────────────────────────────────────────────
       - name: Make kpax_last_states
         run: python scripts/make_kpax_last_states.py
 
       - name: Make kpax_history_light
         run: python scripts/make_kpax_history_light.py
 
-      - name: Générer parquet historique
+      - name: Generer parquet historique
         run: python scripts/gen_history_parquet.py
 
       - name: Upload vers Supabase
