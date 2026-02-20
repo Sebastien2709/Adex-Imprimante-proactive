@@ -43,6 +43,10 @@ jobs:
 
       # ── Data ingestion ────────────────────────────────────────
       - name: Télécharger données SharePoint
+      - name: Debug — lister fichiers téléchargés
+        run: |
+          echo "=== data/raw/xrm ==="
+          ls -la data/raw/xrm/ || echo "(vide)"
         run: python download_xrm_filtered.py
 
       - name: Ingest
